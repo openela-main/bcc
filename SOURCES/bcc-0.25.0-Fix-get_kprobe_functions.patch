@@ -1,0 +1,30 @@
+From c27899b15bca6188d34c0b87b3389eeda2a90cb5 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Mon, 9 Jan 2023 18:17:20 +0100
+Subject: [PATCH] Fix get_kprobe_functions
+
+get_kprobe_functions will not only return a function that matches the
+regular expression, but also any function that starts with a
+substrings that matches it. This is obviously not the intended
+behavior.
+The issue is easily fixed by replacing re.match by re.fullmatch.
+---
+ src/python/bcc/__init__.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/python/bcc/__init__.py b/src/python/bcc/__init__.py
+index 7175b98e..970ddcc2 100644
+--- a/src/python/bcc/__init__.py
++++ b/src/python/bcc/__init__.py
+@@ -745,7 +745,7 @@ DEBUG_BTF = 0x20
+                 # Exclude all gcc 8's extra .cold functions
+                 elif re.match(b'^.*\.cold(\.\d+)?$', fn):
+                     continue
+-                if (t.lower() in [b't', b'w']) and re.match(event_re, fn) \
++                if (t.lower() in [b't', b'w']) and re.fullmatch(event_re, fn) \
+                     and fn not in blacklist:
+                     fns.append(fn)
+         return set(fns)     # Some functions may appear more than once
+-- 
+2.38.1
+
