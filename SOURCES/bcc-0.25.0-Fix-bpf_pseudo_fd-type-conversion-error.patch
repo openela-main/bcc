@@ -1,0 +1,77 @@
+From c17a12ac030c5d9c812e611f8132570af0e795af Mon Sep 17 00:00:00 2001
+From: Yonghong Song <yhs@fb.com>
+Date: Sat, 13 Aug 2022 17:50:07 -0700
+Subject: [PATCH 1/2] Fix bpf_pseudo_fd() type conversion error
+
+With llvm15 and llvm16, the following command line
+  sudo ./trace.py 'smp_call_function_single "%K", arg1'
+will cause error:
+  /virtual/main.c:60:36: error: incompatible integer to pointer conversion passing 'u64'
+    (aka 'unsigned long long') to parameter of type 'void *' [-Wint-conversion]
+        bpf_perf_event_output(ctx, bpf_pseudo_fd(1, -1), CUR_CPU_IDENTIFIER, &__data, sizeof(__data));
+                                   ^~~~~~~~~~~~~~~~~~~~
+  1 error generated.
+  Failed to compile BPF module <text>
+
+In helpers.h, we have
+  u64 bpf_pseudo_fd(u64, u64) asm("llvm.bpf.pseudo");
+Apparently, <= llvm14 can tolerate u64 -> 'void *' conversion, but
+llvm15 by default will cause an error.
+
+Let us explicitly convert bpf_pseudo_fd to 'void *' to avoid
+such errors.
+
+Signed-off-by: Yonghong Song <yhs@fb.com>
+---
+ src/cc/frontends/clang/b_frontend_action.cc | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/src/cc/frontends/clang/b_frontend_action.cc b/src/cc/frontends/clang/b_frontend_action.cc
+index a4e05b16..dbeba3e4 100644
+--- a/src/cc/frontends/clang/b_frontend_action.cc
++++ b/src/cc/frontends/clang/b_frontend_action.cc
+@@ -957,7 +957,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
+           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
+           string args_other = rewriter_.getRewrittenText(expansionRange(SourceRange(GET_BEGINLOC(Call->getArg(1)),
+                                                            GET_ENDLOC(Call->getArg(2)))));
+-          txt = "bpf_perf_event_output(" + arg0 + ", bpf_pseudo_fd(1, " + fd + ")";
++          txt = "bpf_perf_event_output(" + arg0 + ", (void *)bpf_pseudo_fd(1, " + fd + ")";
+           txt += ", CUR_CPU_IDENTIFIER, " + args_other + ")";
+ 
+           // e.g.
+@@ -986,7 +986,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
+           string meta_len = rewriter_.getRewrittenText(expansionRange(Call->getArg(3)->getSourceRange()));
+           txt = "bpf_perf_event_output(" +
+             skb + ", " +
+-            "bpf_pseudo_fd(1, " + fd + "), " +
++            "(void *)bpf_pseudo_fd(1, " + fd + "), " +
+             "((__u64)" + skb_len + " << 32) | BPF_F_CURRENT_CPU, " +
+             meta + ", " +
+             meta_len + ");";
+@@ -1006,12 +1006,12 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
+           string keyp = rewriter_.getRewrittenText(expansionRange(Call->getArg(1)->getSourceRange()));
+           string flag = rewriter_.getRewrittenText(expansionRange(Call->getArg(2)->getSourceRange()));
+           txt = "bpf_" + string(memb_name) + "(" + ctx + ", " +
+-            "bpf_pseudo_fd(1, " + fd + "), " + keyp + ", " + flag + ");";
++            "(void *)bpf_pseudo_fd(1, " + fd + "), " + keyp + ", " + flag + ");";
+         } else if (memb_name == "ringbuf_output") {
+           string name = string(Ref->getDecl()->getName());
+           string args = rewriter_.getRewrittenText(expansionRange(SourceRange(GET_BEGINLOC(Call->getArg(0)),
+                                                            GET_ENDLOC(Call->getArg(2)))));
+-          txt = "bpf_ringbuf_output(bpf_pseudo_fd(1, " + fd + ")";
++          txt = "bpf_ringbuf_output((void *)bpf_pseudo_fd(1, " + fd + ")";
+           txt += ", " + args + ")";
+ 
+           // e.g.
+@@ -1033,7 +1033,7 @@ bool BTypeVisitor::VisitCallExpr(CallExpr *Call) {
+         } else if (memb_name == "ringbuf_reserve") {
+           string name = string(Ref->getDecl()->getName());
+           string arg0 = rewriter_.getRewrittenText(expansionRange(Call->getArg(0)->getSourceRange()));
+-          txt = "bpf_ringbuf_reserve(bpf_pseudo_fd(1, " + fd + ")";
++          txt = "bpf_ringbuf_reserve((void *)bpf_pseudo_fd(1, " + fd + ")";
+           txt += ", " + arg0 + ", 0)"; // Flags in reserve are meaningless
+         } else if (memb_name == "ringbuf_discard") {
+           string name = string(Ref->getDecl()->getName());
+-- 
+2.38.1
+
