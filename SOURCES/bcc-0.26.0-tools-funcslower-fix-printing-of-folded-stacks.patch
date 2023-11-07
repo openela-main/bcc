@@ -1,0 +1,57 @@
+From 29f0fa3693d679102680fece9ed5e606e291c5fa Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Fri, 7 Apr 2023 14:30:54 +0200
+Subject: [PATCH] tools/funcslower: fix printing of folded stacks
+
+When trying to print folded stack, funcslower tries to join bytes to a
+string. Let's perform that operation with bytes only, and decode
+before printing.
+Also, decode symbols name before printing for the default stack
+format, to avoid unsightly b'xxx' output.
+
+It fixes the following error:
+
+Exception ignored on calling ctypes callback function: <function PerfEventArray._open_perf_buffer.<locals>.raw_cb_ at 0x7f200541e5e0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.9/site-packages/bcc/table.py", line 982, in raw_cb_
+    callback(cpu, data, size)
+  File "/usr/share/bcc/tools/funcslower", line 340, in print_event
+    print_stack(event)
+  File "/usr/share/bcc/tools/funcslower", line 324, in print_stack
+    print("%s %d" % (";".join(line), 1))
+TypeError: sequence item 1: expected str instance, bytes found
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ tools/funcslower.py | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/tools/funcslower.py b/tools/funcslower.py
+index 6df7f24c..4b3798a0 100755
+--- a/tools/funcslower.py
++++ b/tools/funcslower.py
+@@ -317,17 +317,17 @@ earliest_ts = 0
+         # print folded stack output
+         user_stack = list(user_stack)
+         kernel_stack = list(kernel_stack)
+-        line = [event.comm.decode('utf-8', 'replace')] + \
++        line = [event.comm] + \
+             [b.sym(addr, event.tgid_pid) for addr in reversed(user_stack)] + \
+             (do_delimiter and ["-"] or []) + \
+             [b.ksym(addr) for addr in reversed(kernel_stack)]
+-        print("%s %d" % (";".join(line), 1))
++        print("%s %d" % (b';'.join(line).decode('utf-8', 'replace'), 1))
+     else:
+         # print default multi-line stack output.
+         for addr in kernel_stack:
+-            print("    %s" % b.ksym(addr))
++            print("    %s" % b.ksym(addr).decode('utf-8', 'replace'))
+         for addr in user_stack:
+-            print("    %s" % b.sym(addr, event.tgid_pid))
++            print("    %s" % b.sym(addr, event.tgid_pid).decode('utf-8', 'replace'))
+ 
+ def print_event(cpu, data, size):
+     event = b["events"].event(data)
+-- 
+2.39.2
+

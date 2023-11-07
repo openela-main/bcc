@@ -1,0 +1,58 @@
+From 64f9c355a62f78000270d025b479b7eeba7349e9 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 11 Jan 2023 16:46:32 +0100
+Subject: [PATCH] killsnoop: add missing -s and -T options to the synopsis
+
+The -s option is missing from the synopsis of the killsnoop manpage,
+example file and the comment on top of the tool itself.
+Also, -T option is missing from the example file.
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ man/man8/killsnoop.8        | 2 +-
+ tools/killsnoop.py          | 2 +-
+ tools/killsnoop_example.txt | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/man/man8/killsnoop.8 b/man/man8/killsnoop.8
+index 3f63d2ee..cb2a975e 100644
+--- a/man/man8/killsnoop.8
++++ b/man/man8/killsnoop.8
+@@ -2,7 +2,7 @@
+ .SH NAME
+ killsnoop \- Trace signals issued by the kill() syscall. Uses Linux eBPF/bcc.
+ .SH SYNOPSIS
+-.B killsnoop [\-h] [\-x] [-p PID] [-T PID]
++.B killsnoop [\-h] [\-x] [-p PID] [-T PID] [-s SIGNAL]
+ .SH DESCRIPTION
+ killsnoop traces the kill() syscall, to show signals sent via this method. This
+ may be useful to troubleshoot failing applications, where an unknown mechanism
+diff --git a/tools/killsnoop.py b/tools/killsnoop.py
+index c0166f1d..9cce8dcc 100755
+--- a/tools/killsnoop.py
++++ b/tools/killsnoop.py
+@@ -4,7 +4,7 @@
+ # killsnoop Trace signals issued by the kill() syscall.
+ #           For Linux, uses BCC, eBPF. Embedded C.
+ #
+-# USAGE: killsnoop [-h] [-x] [-p PID] [-T PID]
++# USAGE: killsnoop [-h] [-x] [-p PID] [-T PID] [-s SIGNAL]
+ #
+ # Copyright (c) 2015 Brendan Gregg.
+ # Licensed under the Apache License, Version 2.0 (the "License")
+diff --git a/tools/killsnoop_example.txt b/tools/killsnoop_example.txt
+index 904fe6ef..97c3ad70 100644
+--- a/tools/killsnoop_example.txt
++++ b/tools/killsnoop_example.txt
+@@ -19,7 +19,7 @@ The second line showed the same signal sent, this time resulting in a -3
+ USAGE message:
+ 
+ # ./killsnoop -h
+-usage: killsnoop [-h] [-x] [-p PID]
++usage: killsnoop [-h] [-x] [-p PID] [-T PID] [-s SIGNAL]
+ 
+ Trace signals issued by the kill() syscall
+ 
+-- 
+2.39.2
+

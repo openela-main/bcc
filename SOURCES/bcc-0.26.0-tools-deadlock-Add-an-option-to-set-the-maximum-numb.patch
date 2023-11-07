@@ -1,0 +1,76 @@
+From 0e9384ec4c88d2da2d23475f58ec9bff7eb48639 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 25 Apr 2023 16:04:05 +0200
+Subject: [PATCH] tools/deadlock: Add an option to set the maximum number of
+ stack traces
+
+Commit 77f5252d ("tools/deadlock: support specifies maxnum of threads
+and edge cases (#3455)") allow to set the maximum number of threads
+and edge cases to be able to reduce the memory usage of the deadlock
+tool. It however let the size of the map of stack traces fixed. It's
+current size, 640k (actually rounded up to 1M) takes 1Gb of vmalloced
+kernel memory.
+
+This patch adds an option to make the maximum number of stack traces
+user defined. It also set the default value to 64k, in line with the
+current default for the number of edge cases and threads.
+
+It fix the following issue on system with limited memory ressources:
+could not open bpf map: stack_traces, error: Cannot allocate memory
+Traceback (most recent call last):
+  File "/tmp/./deadlock.py", line 577, in <module>
+    main()
+  File "/tmp/./deadlock.py", line 489, in main
+    bpf = BPF(text=text)
+  File "/usr/lib/python3.9/site-packages/bcc/__init__.py", line 479, in __init__
+    raise Exception("Failed to compile BPF module %s" % (src_file or "<text>"))
+Exception: Failed to compile BPF module <text>
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ tools/deadlock.c  | 2 +-
+ tools/deadlock.py | 8 ++++++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/tools/deadlock.c b/tools/deadlock.c
+index 006dc121..6ae405ba 100644
+--- a/tools/deadlock.c
++++ b/tools/deadlock.c
+@@ -60,7 +60,7 @@ struct thread_created_leaf_t {
+ BPF_HASH(thread_to_parent, u32, struct thread_created_leaf_t);
+ 
+ // Stack traces when threads are created and when mutexes are locked/unlocked.
+-BPF_STACK_TRACE(stack_traces, 655360);
++BPF_STACK_TRACE(stack_traces, MAX_TRACES);
+ 
+ // The first argument to the user space function we are tracing
+ // is a pointer to the mutex M held by thread T.
+diff --git a/tools/deadlock.py b/tools/deadlock.py
+index 12de099f..f7eb4ce0 100755
+--- a/tools/deadlock.py
++++ b/tools/deadlock.py
+@@ -467,6 +467,13 @@ import time
+         help='Specifies the maximum number of edge cases that can be recorded. '
+              'default 65536. Note. 88 bytes per edge case.'
+     )
++    parser.add_argument(
++        '-s', '--stacktraces', type=int, default=65536,
++        help='Specifies the maximum number of stack traces that can be recorded. '
++             'This number is rounded up to the next power of two.'
++             'default 65536. Note. 1 kbytes vmalloced per stack trace.'
++    )
++
+     args = parser.parse_args()
+     if not args.binary:
+         try:
+@@ -479,6 +486,7 @@ import time
+         text = f.read()
+     text = text.replace('MAX_THREADS', str(args.threads));
+     text = text.replace('MAX_EDGES', str(args.edges));
++    text = text.replace('MAX_TRACES', str(args.stacktraces));
+     bpf = BPF(text=text)
+ 
+     # Trace where threads are created
+-- 
+2.39.2
+

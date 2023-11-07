@@ -1,0 +1,140 @@
+From 533db3453a09695f79368792cdd5fbe2ddeaa55e Mon Sep 17 00:00:00 2001
+From: Rong Tao <rongtao@cestc.cn>
+Date: Sun, 22 Jan 2023 15:44:46 +0800
+Subject: [PATCH] tools/slabratetop: Fix error: incomplete definition of type
+ 'struct slab'
+
+kernel commit 40f3bf0cb04c("mm: Convert struct page to struct slab in functions
+used by other subsystems") introduce slab_address() function, commit 6e48a966dfd1
+("mm/kasan: Convert to struct folio and struct slab") linux/kasan.h adds a
+dependency on the slab struct, This leads to the following problems:
+
+    $ sudo ./slabratetop.py
+    In file included from /virtual/main.c:13:
+    include/linux/slub_def.h:162:26: warning: call to undeclared function 'slab_address';
+    ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+            void *object = x - (x - slab_address(slab)) % cache->size;
+                                    ^
+    include/linux/slub_def.h:162:46: error: invalid operands to binary expression ('void *' and 'unsigned int')
+            void *object = x - (x - slab_address(slab)) % cache->size;
+                               ~~~~~~~~~~~~~~~~~~~~~~~~ ^ ~~~~~~~~~~~
+    include/linux/slub_def.h:164:8: error: incomplete definition of type 'struct slab'
+                    (slab->objects - 1) * cache->size;
+                     ~~~~^
+    include/linux/kasan.h:13:8: note: forward declaration of 'struct slab'
+    struct slab;
+           ^
+    ...
+
+At first, I wanted to fix this with a kernel patch [1], however, bcc as a
+downstream project of the kernel, this issue should be solved inside the bcc
+project. This is agreed by kernel maintainer and bcc maintainer @yonghong-song.
+
+This solution is provided by @yonghong-song [0].
+
+[0] https://github.com/iovisor/bcc/issues/4438
+[1] https://lore.kernel.org/all/tencent_ABA832E296819D1053D6C625ADCAF76BC706@qq.com/
+
+Signed-off-by: Rong Tao <rongtao@cestc.cn>
+Signed-off-by: Yonghong Song <yhs@fb.com>
+---
+ tools/slabratetop.py | 76 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 76 insertions(+)
+
+diff --git a/tools/slabratetop.py b/tools/slabratetop.py
+index ac44b2bd..8fbcac5e 100755
+--- a/tools/slabratetop.py
++++ b/tools/slabratetop.py
+@@ -14,6 +14,9 @@
+ # Licensed under the Apache License, Version 2.0 (the "License")
+ #
+ # 15-Oct-2016   Brendan Gregg   Created this.
++# 23-Jan-2023   Rong Tao        Introduce kernel internal data structure and
++#                               functions to temporarily solve problem for
++#                               >=5.16(TODO: fix this workaround)
+ 
+ from __future__ import print_function
+ from bcc import BPF
+@@ -65,6 +68,79 @@ bpf_text = """
+ // 5.9, but it does not hurt to have it here for versions 5.4 to 5.8.
+ struct memcg_cache_params {};
+ 
++// introduce kernel interval slab structure and slab_address() function, solved
++// 'undefined' error for >=5.16. TODO: we should fix this workaround if BCC
++// framework support BTF/CO-RE.
++struct slab {
++    unsigned long __page_flags;
++
++#if defined(CONFIG_SLAB)
++
++    struct kmem_cache *slab_cache;
++    union {
++        struct {
++            struct list_head slab_list;
++            void *freelist; /* array of free object indexes */
++            void *s_mem;    /* first object */
++        };
++        struct rcu_head rcu_head;
++    };
++    unsigned int active;
++
++#elif defined(CONFIG_SLUB)
++
++    struct kmem_cache *slab_cache;
++    union {
++        struct {
++            union {
++                struct list_head slab_list;
++#ifdef CONFIG_SLUB_CPU_PARTIAL
++                struct {
++                    struct slab *next;
++                        int slabs;      /* Nr of slabs left */
++                };
++#endif
++            };
++            /* Double-word boundary */
++            void *freelist;         /* first free object */
++            union {
++                unsigned long counters;
++                struct {
++                    unsigned inuse:16;
++                    unsigned objects:15;
++                    unsigned frozen:1;
++                };
++            };
++        };
++        struct rcu_head rcu_head;
++    };
++    unsigned int __unused;
++
++#elif defined(CONFIG_SLOB)
++
++    struct list_head slab_list;
++    void *__unused_1;
++    void *freelist;         /* first free block */
++    long units;
++    unsigned int __unused_2;
++
++#else
++#error "Unexpected slab allocator configured"
++#endif
++
++    atomic_t __page_refcount;
++#ifdef CONFIG_MEMCG
++    unsigned long memcg_data;
++#endif
++};
++
++// slab_address() will not be used, and NULL will be returned directly, which
++// can avoid adaptation of different kernel versions
++static inline void *slab_address(const struct slab *slab)
++{
++    return NULL;
++}
++
+ #ifdef CONFIG_SLUB
+ #include <linux/slub_def.h>
+ #else
+-- 
+2.39.1
+
