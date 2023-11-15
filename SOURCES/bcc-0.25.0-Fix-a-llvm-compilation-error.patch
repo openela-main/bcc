@@ -1,0 +1,43 @@
+From f04aaed5402f847ea0127de7ca573d39c57da891 Mon Sep 17 00:00:00 2001
+From: Yonghong Song <yhs@fb.com>
+Date: Sat, 26 Nov 2022 17:41:33 -0800
+Subject: [PATCH] Fix a llvm compilation error
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+With latest llvm16, I got the following compilation error:
+  /.../src/cc/bpf_module.cc: In member function ‘void ebpf::BPFModule::dump_ir(llvm::Module&)’:
+  /.../src/cc/bpf_module.cc:259:15: error: ‘PrintModulePass’ was not declared in this scope
+     MPM.addPass(PrintModulePass(errs()));
+                 ^~~~~~~~~~~~~~~
+  ...
+
+The error is due to the llvm patch https://reviews.llvm.org/D138081.
+Fix the issue by adjust corresponding header file locaiton
+as in the above llvm patch.
+
+Signed-off-by: Yonghong Song <yhs@fb.com>
+---
+ src/cc/bpf_module.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/cc/bpf_module.cc b/src/cc/bpf_module.cc
+index 490fffe8..0f4a4f58 100644
+--- a/src/cc/bpf_module.cc
++++ b/src/cc/bpf_module.cc
+@@ -20,7 +20,11 @@
+ #include <llvm-c/Transforms/IPO.h>
+ #include <llvm/ExecutionEngine/MCJIT.h>
+ #include <llvm/ExecutionEngine/SectionMemoryManager.h>
++#if LLVM_MAJOR_VERSION >= 16
++#include <llvm/IRPrinter/IRPrintingPasses.h>
++#else
+ #include <llvm/IR/IRPrintingPasses.h>
++#endif
+ #include <llvm/IR/LLVMContext.h>
+ #include <llvm/IR/Module.h>
+ 
+-- 
+2.40.1
+

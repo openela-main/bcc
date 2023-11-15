@@ -1,0 +1,684 @@
+From 66d9bffa99738bbed50b3d5b2d87990cdb5e4a58 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Mon, 28 Nov 2022 12:23:59 +0100
+Subject: [PATCH] RHEL: libbpf version fixes
+
+Revert "[bcc] stop using deprecated `bpf_load_program_attr`"
+Revert "backport `struct bpf_create_map_attr`"
+Revert "bcc: Replace deprecated libbpf API"
+
+Revert "bcc: Replace deprecated libbpf APIs" since the libbpf version
+provided in RHEL 8 doesn't provide the new APIs.
+
+Remove BPF_MAP_TYPE_BLOOM_FILTER from bps since the libbpf version in
+RHEL 8, doesn't provide bloom filter map.
+
+Rename btf__load_vmlinux_btf into libbpf_find_kernel_btf. The function
+has been renamed upstream for naming consistency, but RHEL 8 libbpf
+still uses the old name.
+
+Also use the older btf__get_nr_types() instead of btf__type_cnt() for
+the same reason.
+
+Add definition of struct bpf_core_relo.
+---
+ introspection/bps.c   |   1 -
+ libbpf-tools/ksnoop.c |   4 +-
+ src/cc/bcc_btf.cc     |  73 +++++++++++++++-
+ src/cc/bpf_module.cc  |  38 ++++----
+ src/cc/common.cc      |   4 +-
+ src/cc/libbpf.c       | 196 +++++++++++++++---------------------------
+ src/cc/libbpf.h       |  28 ++----
+ 7 files changed, 169 insertions(+), 175 deletions(-)
+
+diff --git a/introspection/bps.c b/introspection/bps.c
+index 232b23d4..6ec02e6c 100644
+--- a/introspection/bps.c
++++ b/introspection/bps.c
+@@ -80,7 +80,6 @@ static const char * const map_type_strings[] = {
+   [BPF_MAP_TYPE_RINGBUF] = "ringbuf",
+   [BPF_MAP_TYPE_INODE_STORAGE] = "inode_storage",
+   [BPF_MAP_TYPE_TASK_STORAGE] = "task_storage",
+-  [BPF_MAP_TYPE_BLOOM_FILTER] = "bloom_filter",
+ };
+ 
+ #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+diff --git a/libbpf-tools/ksnoop.c b/libbpf-tools/ksnoop.c
+index 87fe175c..960e901b 100644
+--- a/libbpf-tools/ksnoop.c
++++ b/libbpf-tools/ksnoop.c
+@@ -347,7 +347,7 @@ static struct btf *get_btf(const char *name)
+ 		name && strlen(name) > 0 ? name : "vmlinux");
+ 
+ 	if (!vmlinux_btf) {
+-		vmlinux_btf = btf__load_vmlinux_btf();
++		vmlinux_btf = libbpf_find_kernel_btf();
+ 		if (!vmlinux_btf) {
+ 			err = -errno;
+ 			p_err("No BTF, cannot determine type info: %s", strerror(-err));
+@@ -357,7 +357,7 @@ static struct btf *get_btf(const char *name)
+ 	if (!name || strlen(name) == 0)
+ 		return vmlinux_btf;
+ 
+-	mod_btf = btf__load_module_btf(name, vmlinux_btf);
++	mod_btf = libbpf_find_kernel_btf(name, vmlinux_btf);
+ 	if (!mod_btf) {
+ 		err = -errno;
+ 		p_err("No BTF for module '%s': %s", name, strerror(-err));
+diff --git a/src/cc/bcc_btf.cc b/src/cc/bcc_btf.cc
+index be248612..74fc902c 100644
+--- a/src/cc/bcc_btf.cc
++++ b/src/cc/bcc_btf.cc
+@@ -170,6 +170,77 @@ static int btf_ext_setup_line_info(struct btf_ext *btf_ext)
+         return btf_ext_setup_info(btf_ext, &param);
+ }
+ 
++/* bpf_core_relo_kind encodes which aspect of captured field/type/enum value
++ * has to be adjusted by relocations.
++ */
++enum bpf_core_relo_kind {
++	BPF_FIELD_BYTE_OFFSET = 0,	/* field byte offset */
++	BPF_FIELD_BYTE_SIZE = 1,	/* field size in bytes */
++	BPF_FIELD_EXISTS = 2,		/* field existence in target kernel */
++	BPF_FIELD_SIGNED = 3,		/* field signedness (0 - unsigned, 1 - signed) */
++	BPF_FIELD_LSHIFT_U64 = 4,	/* bitfield-specific left bitshift */
++	BPF_FIELD_RSHIFT_U64 = 5,	/* bitfield-specific right bitshift */
++	BPF_TYPE_ID_LOCAL = 6,		/* type ID in local BPF object */
++	BPF_TYPE_ID_TARGET = 7,		/* type ID in target kernel */
++	BPF_TYPE_EXISTS = 8,		/* type existence in target kernel */
++	BPF_TYPE_SIZE = 9,		/* type size in bytes */
++	BPF_ENUMVAL_EXISTS = 10,	/* enum value existence in target kernel */
++	BPF_ENUMVAL_VALUE = 11,		/* enum value integer value */
++};
++
++/* The minimum bpf_core_relo checked by the loader
++ *
++ * CO-RE relocation captures the following data:
++ * - insn_off - instruction offset (in bytes) within a BPF program that needs
++ *   its insn->imm field to be relocated with actual field info;
++ * - type_id - BTF type ID of the "root" (containing) entity of a relocatable
++ *   type or field;
++ * - access_str_off - offset into corresponding .BTF string section. String
++ *   interpretation depends on specific relocation kind:
++ *     - for field-based relocations, string encodes an accessed field using
++ *     a sequence of field and array indices, separated by colon (:). It's
++ *     conceptually very close to LLVM's getelementptr ([0]) instruction's
++ *     arguments for identifying offset to a field.
++ *     - for type-based relocations, strings is expected to be just "0";
++ *     - for enum value-based relocations, string contains an index of enum
++ *     value within its enum type;
++ *
++ * Example to provide a better feel.
++ *
++ *   struct sample {
++ *       int a;
++ *       struct {
++ *           int b[10];
++ *       };
++ *   };
++ *
++ *   struct sample *s = ...;
++ *   int x = &s->a;     // encoded as "0:0" (a is field #0)
++ *   int y = &s->b[5];  // encoded as "0:1:0:5" (anon struct is field #1, 
++ *                      // b is field #0 inside anon struct, accessing elem #5)
++ *   int z = &s[10]->b; // encoded as "10:1" (ptr is used as an array)
++ *
++ * type_id for all relocs in this example  will capture BTF type id of
++ * `struct sample`.
++ *
++ * Such relocation is emitted when using __builtin_preserve_access_index()
++ * Clang built-in, passing expression that captures field address, e.g.:
++ *
++ * bpf_probe_read(&dst, sizeof(dst),
++ *		  __builtin_preserve_access_index(&src->a.b.c));
++ *
++ * In this case Clang will emit field relocation recording necessary data to
++ * be able to find offset of embedded `a.b.c` field within `src` struct.
++ *
++ *   [0] https://llvm.org/docs/LangRef.html#getelementptr-instruction
++ */
++struct bpf_core_relo {
++	__u32   insn_off;
++	__u32   type_id;
++	__u32   access_str_off;
++	enum bpf_core_relo_kind kind;
++};
++
+ static int btf_ext_setup_core_relos(struct btf_ext *btf_ext)
+ {
+         struct btf_ext_sec_setup_param param = {
+@@ -597,7 +668,7 @@ int BTF::load(uint8_t *btf_sec, uintptr_t btf_sec_size,
+     return -1;
+   }
+ 
+-  if (btf__load_into_kernel(btf)) {
++  if (btf__load(btf)) {
+     btf__free(btf);
+     warning("Loading .BTF section failed\n");
+     return -1;
+diff --git a/src/cc/bpf_module.cc b/src/cc/bpf_module.cc
+index 86f6a228..490fffe8 100644
+--- a/src/cc/bpf_module.cc
++++ b/src/cc/bpf_module.cc
+@@ -407,7 +407,7 @@ int BPFModule::create_maps(std::map<std::string, std::pair<int, int>> &map_tids,
+     }
+ 
+     if (pinned_id <= 0) {
+-      struct bcc_create_map_attr attr = {};
++      struct bpf_create_map_attr attr = {};
+       attr.map_type = (enum bpf_map_type)map_type;
+       attr.name = map_name;
+       attr.key_size = key_size;
+@@ -982,22 +982,26 @@ int BPFModule::bcc_func_load(int prog_type, const char *name,
+                 const char *license, unsigned kern_version,
+                 int log_level, char *log_buf, unsigned log_buf_size,
+                 const char *dev_name, unsigned flags, int expected_attach_type) {
+-  struct bpf_prog_load_opts opts = {};
++  struct bpf_load_program_attr attr = {};
+   unsigned func_info_cnt, line_info_cnt, finfo_rec_size, linfo_rec_size;
+   void *func_info = NULL, *line_info = NULL;
+   int ret;
+ 
++  attr.prog_type = (enum bpf_prog_type)prog_type;
+   if (expected_attach_type != -1) {
+-    opts.expected_attach_type = (enum bpf_attach_type)expected_attach_type;
++    attr.expected_attach_type = (enum bpf_attach_type)expected_attach_type;
+   }
+-  if (prog_type != BPF_PROG_TYPE_TRACING &&
+-      prog_type != BPF_PROG_TYPE_EXT) {
+-    opts.kern_version = kern_version;
++  attr.name = name;
++  attr.insns = insns;
++  attr.license = license;
++  if (attr.prog_type != BPF_PROG_TYPE_TRACING &&
++      attr.prog_type != BPF_PROG_TYPE_EXT) {
++    attr.kern_version = kern_version;
+   }
+-  opts.prog_flags = flags;
+-  opts.log_level = log_level;
++  attr.prog_flags = flags;
++  attr.log_level = log_level;
+   if (dev_name)
+-    opts.prog_ifindex = if_nametoindex(dev_name);
++    attr.prog_ifindex = if_nametoindex(dev_name);
+ 
+   if (btf_) {
+     int btf_fd = btf_->get_fd();
+@@ -1008,17 +1012,17 @@ int BPFModule::bcc_func_load(int prog_type, const char *name,
+                              &finfo_rec_size, &line_info,
+                              &line_info_cnt, &linfo_rec_size);
+     if (!ret) {
+-      opts.prog_btf_fd = btf_fd;
+-      opts.func_info = func_info;
+-      opts.func_info_cnt = func_info_cnt;
+-      opts.func_info_rec_size = finfo_rec_size;
+-      opts.line_info = line_info;
+-      opts.line_info_cnt = line_info_cnt;
+-      opts.line_info_rec_size = linfo_rec_size;
++      attr.prog_btf_fd = btf_fd;
++      attr.func_info = func_info;
++      attr.func_info_cnt = func_info_cnt;
++      attr.func_info_rec_size = finfo_rec_size;
++      attr.line_info = line_info;
++      attr.line_info_cnt = line_info_cnt;
++      attr.line_info_rec_size = linfo_rec_size;
+     }
+   }
+ 
+-  ret = bcc_prog_load_xattr((enum bpf_prog_type)prog_type, name, license, insns, &opts, prog_len, log_buf, log_buf_size, allow_rlimit_);
++  ret = bcc_prog_load_xattr(&attr, prog_len, log_buf, log_buf_size, allow_rlimit_);
+   if (btf_) {
+     free(func_info);
+     free(line_info);
+diff --git a/src/cc/common.cc b/src/cc/common.cc
+index 3143adb0..11970275 100644
+--- a/src/cc/common.cc
++++ b/src/cc/common.cc
+@@ -34,11 +34,11 @@ using std::experimental::optional;
+ static optional<int32_t> get_enum_val_from_btf(const char *name) {
+   optional<int32_t> val;
+ 
+-  auto btf = btf__load_vmlinux_btf();
++  auto btf = libbpf_find_kernel_btf();
+   if (libbpf_get_error(btf))
+     return {};
+ 
+-  for (size_t i = 1; i < btf__type_cnt(btf); i++) {
++  for (size_t i = 1; i <= btf__get_nr_types(btf); i++) {
+     auto t = btf__type_by_id(btf, i);
+     if (btf_kind(t) != BTF_KIND_ENUM)
+       continue;
+diff --git a/src/cc/libbpf.c b/src/cc/libbpf.c
+index 0c09f9b3..7042c792 100644
+--- a/src/cc/libbpf.c
++++ b/src/cc/libbpf.c
+@@ -319,33 +319,14 @@ static uint64_t ptr_to_u64(void *ptr)
+   return (uint64_t) (unsigned long) ptr;
+ }
+ 
+-static int libbpf_bpf_map_create(struct bcc_create_map_attr *create_attr)
+-{
+-  LIBBPF_OPTS(bpf_map_create_opts, p);
+-
+-  p.map_flags = create_attr->map_flags;
+-  p.numa_node = create_attr->numa_node;
+-  p.btf_fd = create_attr->btf_fd;
+-  p.btf_key_type_id = create_attr->btf_key_type_id;
+-  p.btf_value_type_id = create_attr->btf_value_type_id;
+-  p.map_ifindex = create_attr->map_ifindex;
+-  if (create_attr->map_type == BPF_MAP_TYPE_STRUCT_OPS)
+-    p.btf_vmlinux_value_type_id = create_attr->btf_vmlinux_value_type_id;
+-  else
+-    p.inner_map_fd = create_attr->inner_map_fd;
+-
+-  return bpf_map_create(create_attr->map_type, create_attr->name, create_attr->key_size,
+-                        create_attr->value_size, create_attr->max_entries, &p);
+-}
+-
+-int bcc_create_map_xattr(struct bcc_create_map_attr *attr, bool allow_rlimit)
++int bcc_create_map_xattr(struct bpf_create_map_attr *attr, bool allow_rlimit)
+ {
+   unsigned name_len = attr->name ? strlen(attr->name) : 0;
+   char map_name[BPF_OBJ_NAME_LEN] = {};
+ 
+   memcpy(map_name, attr->name, min(name_len, BPF_OBJ_NAME_LEN - 1));
+   attr->name = map_name;
+-  int ret = libbpf_bpf_map_create(attr);
++  int ret = bpf_create_map_xattr(attr);
+ 
+   if (ret < 0 && errno == EPERM) {
+     if (!allow_rlimit)
+@@ -357,7 +338,7 @@ int bcc_create_map_xattr(struct bcc_create_map_attr *attr, bool allow_rlimit)
+       rl.rlim_max = RLIM_INFINITY;
+       rl.rlim_cur = rl.rlim_max;
+       if (setrlimit(RLIMIT_MEMLOCK, &rl) == 0)
+-        ret = libbpf_bpf_map_create(attr);
++        ret = bpf_create_map_xattr(attr);
+     }
+   }
+ 
+@@ -367,12 +348,12 @@ int bcc_create_map_xattr(struct bcc_create_map_attr *attr, bool allow_rlimit)
+     attr->btf_fd = 0;
+     attr->btf_key_type_id = 0;
+     attr->btf_value_type_id = 0;
+-    ret = libbpf_bpf_map_create(attr);
++    ret = bpf_create_map_xattr(attr);
+   }
+ 
+   if (ret < 0 && name_len && (errno == E2BIG || errno == EINVAL)) {
+     map_name[0] = '\0';
+-    ret = libbpf_bpf_map_create(attr);
++    ret = bpf_create_map_xattr(attr);
+   }
+ 
+   if (ret < 0 && errno == EPERM) {
+@@ -385,7 +366,7 @@ int bcc_create_map_xattr(struct bcc_create_map_attr *attr, bool allow_rlimit)
+       rl.rlim_max = RLIM_INFINITY;
+       rl.rlim_cur = rl.rlim_max;
+       if (setrlimit(RLIMIT_MEMLOCK, &rl) == 0)
+-        ret = libbpf_bpf_map_create(attr);
++        ret = bpf_create_map_xattr(attr);
+     }
+   }
+   return ret;
+@@ -395,7 +376,7 @@ int bcc_create_map(enum bpf_map_type map_type, const char *name,
+                    int key_size, int value_size,
+                    int max_entries, int map_flags)
+ {
+-  struct bcc_create_map_attr attr = {};
++  struct bpf_create_map_attr attr = {};
+ 
+   attr.map_type = map_type;
+   attr.name = name;
+@@ -644,70 +625,24 @@ int bpf_prog_get_tag(int fd, unsigned long long *ptag)
+   return -2;
+ }
+ 
+-static int libbpf_bpf_prog_load(enum bpf_prog_type prog_type,
+-                                const char *prog_name, const char *license,
+-                                const struct bpf_insn *insns, size_t insn_cnt,
+-                                struct bpf_prog_load_opts *opts,
+-                                char *log_buf, size_t log_buf_sz)
+-{
+-
+-  LIBBPF_OPTS(bpf_prog_load_opts, p);
+-
+-  if (!opts || !log_buf != !log_buf_sz) {
+-    errno = EINVAL;
+-    return -EINVAL;
+-  }
+-
+-  p.expected_attach_type = opts->expected_attach_type;
+-  switch (prog_type) {
+-  case BPF_PROG_TYPE_STRUCT_OPS:
+-  case BPF_PROG_TYPE_LSM:
+-    p.attach_btf_id = opts->attach_btf_id;
+-    break;
+-  case BPF_PROG_TYPE_TRACING:
+-  case BPF_PROG_TYPE_EXT:
+-    p.attach_btf_id = opts->attach_btf_id;
+-    p.attach_prog_fd = opts->attach_prog_fd;
+-    break;
+-  default:
+-    p.prog_ifindex = opts->prog_ifindex;
+-    p.kern_version = opts->kern_version;
+-  }
+-  p.log_level = opts->log_level;
+-  p.log_buf = log_buf;
+-  p.log_size = log_buf_sz;
+-  p.prog_btf_fd = opts->prog_btf_fd;
+-  p.func_info_rec_size = opts->func_info_rec_size;
+-  p.func_info_cnt = opts->func_info_cnt;
+-  p.func_info = opts->func_info;
+-  p.line_info_rec_size = opts->line_info_rec_size;
+-  p.line_info_cnt = opts->line_info_cnt;
+-  p.line_info = opts->line_info;
+-  p.prog_flags = opts->prog_flags;
+-
+-  return bpf_prog_load(prog_type, prog_name, license,
+-                       insns, insn_cnt, &p);
+-}
+-
+-int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+-                        const char *license, const struct bpf_insn *insns,
+-                        struct bpf_prog_load_opts *opts, int prog_len,
++int bcc_prog_load_xattr(struct bpf_load_program_attr *attr, int prog_len,
+                         char *log_buf, unsigned log_buf_size, bool allow_rlimit)
+ {
+-  unsigned name_len = prog_name ? strlen(prog_name) : 0;
+-  char *tmp_log_buf = NULL, *opts_log_buf = NULL;
+-  unsigned tmp_log_buf_size = 0, opts_log_buf_size = 0;
++  unsigned name_len = attr->name ? strlen(attr->name) : 0;
++  char *tmp_log_buf = NULL, *attr_log_buf = NULL;
++  unsigned tmp_log_buf_size = 0, attr_log_buf_size = 0;
+   int ret = 0, name_offset = 0, expected_attach_type = 0;
+-  char new_prog_name[BPF_OBJ_NAME_LEN] = {};
++  char prog_name[BPF_OBJ_NAME_LEN] = {};
+ 
+   unsigned insns_cnt = prog_len / sizeof(struct bpf_insn);
++  attr->insns_cnt = insns_cnt;
+ 
+-  if (opts->log_level > 0) {
++  if (attr->log_level > 0) {
+     if (log_buf_size > 0) {
+       // Use user-provided log buffer if available.
+       log_buf[0] = 0;
+-      opts_log_buf = log_buf;
+-      opts_log_buf_size = log_buf_size;
++      attr_log_buf = log_buf;
++      attr_log_buf_size = log_buf_size;
+     } else {
+       // Create and use temporary log buffer if user didn't provide one.
+       tmp_log_buf_size = LOG_BUF_SIZE;
+@@ -715,82 +650,82 @@ int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+       if (!tmp_log_buf) {
+         fprintf(stderr, "bpf: Failed to allocate temporary log buffer: %s\n\n",
+                 strerror(errno));
+-        opts->log_level = 0;
++        attr->log_level = 0;
+       } else {
+         tmp_log_buf[0] = 0;
+-        opts_log_buf = tmp_log_buf;
+-        opts_log_buf_size = tmp_log_buf_size;
++        attr_log_buf = tmp_log_buf;
++        attr_log_buf_size = tmp_log_buf_size;
+       }
+     }
+   }
+ 
+-
+   if (name_len) {
+-    if (strncmp(prog_name, "kprobe__", 8) == 0)
++    if (strncmp(attr->name, "kprobe__", 8) == 0)
+       name_offset = 8;
+-    else if (strncmp(prog_name, "kretprobe__", 11) == 0)
++    else if (strncmp(attr->name, "kretprobe__", 11) == 0)
+       name_offset = 11;
+-    else if (strncmp(prog_name, "tracepoint__", 12) == 0)
++    else if (strncmp(attr->name, "tracepoint__", 12) == 0)
+       name_offset = 12;
+-    else if (strncmp(prog_name, "raw_tracepoint__", 16) == 0)
++    else if (strncmp(attr->name, "raw_tracepoint__", 16) == 0)
+       name_offset = 16;
+-    else if (strncmp(prog_name, "kfunc__", 7) == 0) {
++    else if (strncmp(attr->name, "kfunc__", 7) == 0) {
+       name_offset = 7;
+       expected_attach_type = BPF_TRACE_FENTRY;
+-    } else if (strncmp(prog_name, "kmod_ret__", 10) == 0) {
++    } else if (strncmp(attr->name, "kmod_ret__", 10) == 0) {
+       name_offset = 10;
+       expected_attach_type = BPF_MODIFY_RETURN;
+-    } else if (strncmp(prog_name, "kretfunc__", 10) == 0) {
++    } else if (strncmp(attr->name, "kretfunc__", 10) == 0) {
+       name_offset = 10;
+       expected_attach_type = BPF_TRACE_FEXIT;
+-    } else if (strncmp(prog_name, "lsm__", 5) == 0) {
++    } else if (strncmp(attr->name, "lsm__", 5) == 0) {
+       name_offset = 5;
+       expected_attach_type = BPF_LSM_MAC;
+-    } else if (strncmp(prog_name, "bpf_iter__", 10) == 0) {
++    } else if (strncmp(attr->name, "bpf_iter__", 10) == 0) {
+       name_offset = 10;
+       expected_attach_type = BPF_TRACE_ITER;
+     }
+ 
+-    if (prog_type == BPF_PROG_TYPE_TRACING ||
+-        prog_type == BPF_PROG_TYPE_LSM) {
+-      ret = libbpf_find_vmlinux_btf_id(prog_name + name_offset,
++    if (attr->prog_type == BPF_PROG_TYPE_TRACING ||
++        attr->prog_type == BPF_PROG_TYPE_LSM) {
++      ret = libbpf_find_vmlinux_btf_id(attr->name + name_offset,
+                                        expected_attach_type);
+       if (ret == -EINVAL) {
+         fprintf(stderr, "bpf: vmlinux BTF is not found\n");
+         return ret;
+       } else if (ret < 0) {
+         fprintf(stderr, "bpf: %s is not found in vmlinux BTF\n",
+-                prog_name + name_offset);
++                attr->name + name_offset);
+         return ret;
+       }
+ 
+-      opts->attach_btf_id = ret;
+-      opts->expected_attach_type = expected_attach_type;
++      attr->attach_btf_id = ret;
++      attr->expected_attach_type = expected_attach_type;
+     }
+ 
+-    memcpy(new_prog_name, prog_name + name_offset,
++    memcpy(prog_name, attr->name + name_offset,
+            min(name_len - name_offset, BPF_OBJ_NAME_LEN - 1));
++    attr->name = prog_name;
+   }
+ 
+-  ret = libbpf_bpf_prog_load(prog_type, new_prog_name, license, insns, insns_cnt, opts, opts_log_buf, opts_log_buf_size);
++  ret = bpf_load_program_xattr(attr, attr_log_buf, attr_log_buf_size);
+ 
+   // func_info/line_info may not be supported in old kernels.
+-  if (ret < 0 && opts->func_info && errno == EINVAL) {
+-    opts->prog_btf_fd = 0;
+-    opts->func_info = NULL;
+-    opts->func_info_cnt = 0;
+-    opts->func_info_rec_size = 0;
+-    opts->line_info = NULL;
+-    opts->line_info_cnt = 0;
+-    opts->line_info_rec_size = 0;
+-    ret = libbpf_bpf_prog_load(prog_type, new_prog_name, license, insns, insns_cnt, opts, opts_log_buf, opts_log_buf_size);
++  if (ret < 0 && attr->func_info && errno == EINVAL) {
++    attr->prog_btf_fd = 0;
++    attr->func_info = NULL;
++    attr->func_info_cnt = 0;
++    attr->func_info_rec_size = 0;
++    attr->line_info = NULL;
++    attr->line_info_cnt = 0;
++    attr->line_info_rec_size = 0;
++    ret = bpf_load_program_xattr(attr, attr_log_buf, attr_log_buf_size);
+   }
+ 
+   // BPF object name is not supported on older Kernels.
+   // If we failed due to this, clear the name and try again.
+   if (ret < 0 && name_len && (errno == E2BIG || errno == EINVAL)) {
+-    new_prog_name[0] = '\0';
+-    ret = libbpf_bpf_prog_load(prog_type, new_prog_name, license, insns, insns_cnt, opts, opts_log_buf, opts_log_buf_size);
++    prog_name[0] = '\0';
++    ret = bpf_load_program_xattr(attr, attr_log_buf, attr_log_buf_size);
+   }
+ 
+   if (ret < 0 && errno == EPERM) {
+@@ -809,14 +744,14 @@ int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+       rl.rlim_max = RLIM_INFINITY;
+       rl.rlim_cur = rl.rlim_max;
+       if (setrlimit(RLIMIT_MEMLOCK, &rl) == 0)
+-        ret = libbpf_bpf_prog_load(prog_type, new_prog_name, license, insns, insns_cnt, opts, opts_log_buf, opts_log_buf_size);
++        ret = bpf_load_program_xattr(attr, attr_log_buf, attr_log_buf_size);
+     }
+   }
+ 
+   if (ret < 0 && errno == E2BIG) {
+     fprintf(stderr,
+             "bpf: %s. Program %s too large (%u insns), at most %d insns\n\n",
+-            strerror(errno), new_prog_name, insns_cnt, BPF_MAXINSNS);
++            strerror(errno), attr->name, insns_cnt, BPF_MAXINSNS);
+     return -1;
+   }
+ 
+@@ -825,9 +760,9 @@ int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+     // User has provided a log buffer.
+     if (log_buf_size) {
+       // If logging is not already enabled, enable it and do the syscall again.
+-      if (opts->log_level == 0) {
+-        opts->log_level = 1;
+-        ret = libbpf_bpf_prog_load(prog_type, new_prog_name, license, insns, insns_cnt, opts, log_buf, log_buf_size);
++      if (attr->log_level == 0) {
++        attr->log_level = 1;
++        ret = bpf_load_program_xattr(attr, log_buf, log_buf_size);
+       }
+       // Print the log message and return.
+       bpf_print_hints(ret, log_buf);
+@@ -841,8 +776,8 @@ int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+     if (tmp_log_buf)
+       free(tmp_log_buf);
+     tmp_log_buf_size = LOG_BUF_SIZE;
+-    if (opts->log_level == 0)
+-      opts->log_level = 1;
++    if (attr->log_level == 0)
++      attr->log_level = 1;
+     for (;;) {
+       tmp_log_buf = malloc(tmp_log_buf_size);
+       if (!tmp_log_buf) {
+@@ -851,7 +786,7 @@ int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+         goto return_result;
+       }
+       tmp_log_buf[0] = 0;
+-      ret = libbpf_bpf_prog_load(prog_type, new_prog_name, license, insns, insns_cnt, opts, tmp_log_buf, tmp_log_buf_size);
++      ret = bpf_load_program_xattr(attr, tmp_log_buf, tmp_log_buf_size);
+       if (ret < 0 && errno == ENOSPC) {
+         // Temporary buffer size is not enough. Double it and try again.
+         free(tmp_log_buf);
+@@ -865,7 +800,7 @@ int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+ 
+   // Check if we should print the log message if log_level is not 0,
+   // either specified by user or set due to error.
+-  if (opts->log_level > 0) {
++  if (attr->log_level > 0) {
+     // Don't print if user enabled logging and provided log buffer,
+     // but there is no error.
+     if (log_buf && ret < 0)
+@@ -885,13 +820,16 @@ int bcc_prog_load(enum bpf_prog_type prog_type, const char *name,
+                   const char *license, unsigned kern_version,
+                   int log_level, char *log_buf, unsigned log_buf_size)
+ {
+-  struct bpf_prog_load_opts opts = {};
+-
++  struct bpf_load_program_attr attr = {};
+ 
++  attr.prog_type = prog_type;
++  attr.name = name;
++  attr.insns = insns;
++  attr.license = license;
+   if (prog_type != BPF_PROG_TYPE_TRACING && prog_type != BPF_PROG_TYPE_EXT)
+-    opts.kern_version = kern_version;
+-  opts.log_level = log_level;
+-  return bcc_prog_load_xattr(prog_type, name, license, insns, &opts, prog_len, log_buf, log_buf_size, true);
++    attr.kern_version = kern_version;
++  attr.log_level = log_level;
++  return bcc_prog_load_xattr(&attr, prog_len, log_buf, log_buf_size, true);
+ }
+ 
+ int bpf_open_raw_sock(const char *name)
+@@ -1388,7 +1326,7 @@ int kernel_struct_has_field(const char *struct_name, const char *field_name)
+   struct btf *btf;
+   int i, ret, btf_id;
+ 
+-  btf = btf__load_vmlinux_btf();
++  btf = libbpf_find_kernel_btf();
+   ret = libbpf_get_error(btf);
+   if (ret)
+     return -1;
+@@ -1565,7 +1503,7 @@ int bpf_attach_xdp(const char *dev_name, int progfd, uint32_t flags) {
+     return -1;
+   }
+ 
+-  ret = bpf_xdp_attach(ifindex, progfd, flags, NULL);
++  ret = bpf_set_link_xdp_fd(ifindex, progfd, flags);
+   if (ret) {
+     libbpf_strerror(ret, err_buf, sizeof(err_buf));
+     fprintf(stderr, "bpf: Attaching prog to %s: %s\n", dev_name, err_buf);
+diff --git a/src/cc/libbpf.h b/src/cc/libbpf.h
+index dd86f0a9..e001d740 100644
+--- a/src/cc/libbpf.h
++++ b/src/cc/libbpf.h
+@@ -27,25 +27,8 @@
+ extern "C" {
+ #endif
+ 
+-struct bcc_create_map_attr {
+-	const char *name;
+-	enum bpf_map_type map_type;
+-	__u32 map_flags;
+-	__u32 key_size;
+-	__u32 value_size;
+-	__u32 max_entries;
+-	__u32 numa_node;
+-	__u32 btf_fd;
+-	__u32 btf_key_type_id;
+-	__u32 btf_value_type_id;
+-	__u32 map_ifindex;
+-	union {
+-		__u32 inner_map_fd;
+-		__u32 btf_vmlinux_value_type_id;
+-	};
+-};
+-
+-struct bpf_prog_load_opts;
++struct bpf_create_map_attr;
++struct bpf_load_program_attr;
+ 
+ enum bpf_probe_attach_type {
+ 	BPF_PROBE_ENTRY,
+@@ -61,7 +44,7 @@ struct bcc_perf_buffer_opts {
+ int bcc_create_map(enum bpf_map_type map_type, const char *name,
+                    int key_size, int value_size, int max_entries,
+                    int map_flags);
+-int bcc_create_map_xattr(struct bcc_create_map_attr *attr, bool allow_rlimit);
++int bcc_create_map_xattr(struct bpf_create_map_attr *attr, bool allow_rlimit);
+ int bpf_update_elem(int fd, void *key, void *value, unsigned long long flags);
+ int bpf_lookup_elem(int fd, void *key, void *value);
+ int bpf_delete_elem(int fd, void *key);
+@@ -89,11 +72,10 @@ int bcc_prog_load(enum bpf_prog_type prog_type, const char *name,
+                   const struct bpf_insn *insns, int prog_len,
+                   const char *license, unsigned kern_version,
+                   int log_level, char *log_buf, unsigned log_buf_size);
+-int bcc_prog_load_xattr(enum bpf_prog_type prog_type, const char *prog_name,
+-						const char *license, const struct bpf_insn *insns,
+-						struct bpf_prog_load_opts *opts,
++int bcc_prog_load_xattr(struct bpf_load_program_attr *attr,
+                         int prog_len, char *log_buf,
+                         unsigned log_buf_size, bool allow_rlimit);
++
+ int bpf_attach_socket(int sockfd, int progfd);
+ 
+ /* create RAW socket. If name is not NULL/a non-empty null-terminated string,
+-- 
+2.38.1
+

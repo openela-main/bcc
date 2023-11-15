@@ -1,0 +1,49 @@
+From 1d8419056e128ae49107d27e5f55d1bfa8134e3a Mon Sep 17 00:00:00 2001
+From: Rong Tao <rongtao@cestc.cn>
+Date: Fri, 10 Feb 2023 22:16:56 +0800
+Subject: [PATCH] tools/nfsslower.py: Fix uninitialized struct pad error
+
+The verifier is unhappy, if data struct _pad_ is not initialized, see [0][1].
+
+    $ sudo ./nfsslower.py
+    ...
+    ; bpf_perf_event_output(ctx, (void *)bpf_pseudo_fd(1, -2), CUR_CPU_IDENTIFIER, &data, sizeof(data));
+    83: (79) r1 = *(u64 *)(r10 -144)      ; R1_w=ctx(off=0,imm=0) R10=fp0
+    84: (18) r3 = 0xffffffff              ; R3_w=4294967295
+    86: (b7) r5 = 96                      ; R5_w=96
+    87: (85) call bpf_perf_event_output#25
+    invalid indirect read from stack R4 off -136+92 size 96
+    processed 84 insns (limit 1000000) max_states_per_insn 0 total_states 4 peak_states 4 mark_read 4
+    ...
+    raise Exception("Failed to load BPF program %s: %s" %
+    Exception: Failed to load BPF program b'raw_tracepoint__nfs_commit_done': Permission denied
+
+[0] https://github.com/iovisor/bcc/issues/2623
+[1] https://github.com/iovisor/bcc/pull/4453
+
+Signed-off-by: Rong Tao <rongtao@cestc.cn>
+---
+ tools/nfsslower.py | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/tools/nfsslower.py b/tools/nfsslower.py
+index b5df8f19..c2c243b3 100755
+--- a/tools/nfsslower.py
++++ b/tools/nfsslower.py
+@@ -179,8 +179,11 @@ static int trace_exit(struct pt_regs *ctx, int type)
+ 
+     // populate output struct
+     u32 size = PT_REGS_RC(ctx);
+-    struct data_t data = {.type = type, .size = size, .delta_us = delta_us,
+-        .pid = pid};
++    struct data_t data = {};
++    data.type = type;
++    data.size = size;
++    data.delta_us = delta_us;
++    data.pid = pid;
+     data.ts_us = ts / 1000;
+     data.offset = valp->offset;
+     bpf_get_current_comm(&data.task, sizeof(data.task));
+-- 
+2.40.1
+
