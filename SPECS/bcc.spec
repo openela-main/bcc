@@ -24,17 +24,20 @@
 
 
 Name:           bcc
-Version:        0.25.0
-Release:        2%{?dist}
+Version:        0.26.0
+Release:        4%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
-Patch0:         %%{name}-%%{version}-bcc-support-building-with-external-libbpf-package-an.patch
-Patch2:         %%{name}-%%{version}-Fix-bpf_pseudo_fd-type-conversion-error.patch
-Patch3:         %%{name}-%%{version}-Fix-clang-15-int-to-pointer-conversion-errors.patch
-Patch4:         %%{name}-%%{version}-Fix-some-documentation-issues-4197.patch
-Patch5:         %%{name}-%%{version}-tools-nfsslower-fix-an-uninitialized-struct-error.patch
+Patch0:         %%{name}-%%{version}-tools-nfsslower.py-Fix-uninitialized-struct-pad-erro.patch
+Patch1:         %%{name}-%%{version}-tools-slabratetop-Fix-error-incomplete-definition-of.patch
+Patch2:         %%{name}-%%{version}-tools-readahead-Fix-Failed-to-attach-BPF-program-ent.patch
+Patch3:         %%{name}-%%{version}-tools-compactsnoop.py-Fix-raw_tracepoint-Invalid-arg.patch
+Patch4:         %%{name}-%%{version}-killsnoop-add-missing-s-and-T-options-to-the-synopsi.patch
+Patch5:         %%{name}-%%{version}-tools-funcslower-fix-printing-of-folded-stacks.patch
+Patch6:         %%{name}-%%{version}-tools-deadlock-Add-an-option-to-set-the-maximum-numb.patch
+Patch7:         %%{name}-%%{version}-sync-with-latest-libbpf-repo.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -258,6 +261,24 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
+* Wed Aug 09 2023 Jerome Marchand <jmarchan@redhat.com> - 0.26.0-4
+- Fix tcpretrans (rhbz#2226967)
+
+* Fri May 12 2023 Jerome Marchand <jmarchan@redhat.com> - 0.26.0-3
+- Rebuild with LLVM 16 (rhbz#2050112)
+- Fix compactsnoop (rhbz#2042236)
+- Fix killsnoop documentation (rhbz#2075500)
+- Fix funcslower (rhbz#2075415)
+- Fix deadlock memory usage issue (rhbz#2050112)
+- Fix nfsslower (rhbz#2180934)
+- Use upstream fix for nfsslower unititialized struct issue
+
+* Wed Mar 15 2023 Jerome Marchand <jmarchan@redhat.com> - 0.26.0-2
+- Rebuild with the right rhel-target
+
+* Fri Mar 10 2023 Jerome Marchand <jmarchan@redhat.com> - 0.26.0-1
+- Rebase to v0.26.0
+
 * Thu Jan 05 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-2
 - Rebuild for libbpf 1.0
 
