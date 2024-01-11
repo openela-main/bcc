@@ -1,0 +1,42 @@
+From acee5d39d24b102e8ed09a242cb1c53246a1fb7f Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 29 Nov 2022 15:33:49 +0100
+Subject: [PATCH] Revert "tools/tcpaccept: Fix support for v5.6+ kernels"
+
+This reverts commit 28955512d991ee3849c2a9accfc54bef9cd35f21.
+
+It breaks tcpaccept on RHEL 8 kernel.
+---
+ tools/tcpaccept.py | 9 ++-------
+ 1 file changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/tools/tcpaccept.py b/tools/tcpaccept.py
+index b2ace4fa..d3e44143 100755
+--- a/tools/tcpaccept.py
++++ b/tools/tcpaccept.py
+@@ -116,7 +116,7 @@ int kretprobe__inet_csk_accept(struct pt_regs *ctx)
+         return 0;
+ 
+     // check this is TCP
+-    u16 protocol = 0;
++    u8 protocol = 0;
+     // workaround for reading the sk_protocol bitfield:
+ 
+     // Following comments add by Joe Yin:
+@@ -132,12 +132,7 @@ int kretprobe__inet_csk_accept(struct pt_regs *ctx)
+     int gso_max_segs_offset = offsetof(struct sock, sk_gso_max_segs);
+     int sk_lingertime_offset = offsetof(struct sock, sk_lingertime);
+ 
+-
+-    // Since kernel v5.6 sk_protocol is its own u16 field and gso_max_segs
+-    // precedes sk_lingertime.
+-    if (sk_lingertime_offset - gso_max_segs_offset == 2)
+-        protocol = newsk->sk_protocol;
+-    else if (sk_lingertime_offset - gso_max_segs_offset == 4)
++    if (sk_lingertime_offset - gso_max_segs_offset == 4)
+         // 4.10+ with little endian
+ #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+         protocol = *(u8 *)((u64)&newsk->sk_gso_max_segs - 3);
+-- 
+2.38.1
+
