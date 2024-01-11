@@ -1,0 +1,96 @@
+From 9ae3908ae38b3e8d8e36a52c0e5664c453d4c015 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 26 Oct 2022 14:41:54 +0200
+Subject: [PATCH 2/2] Fix clang 15 int to pointer conversion errors
+
+Since version 15, clang issues error for implicit conversion of
+integer to pointer. Several tools are broken. This patch add explicit
+pointer cast where needed.
+
+Fixes the following errors:
+/virtual/main.c:37:18: error: incompatible integer to pointer conversion initializing 'struct request *' with an expression of type 'unsigned long' [-Wint-conversion]
+ struct request *req = ctx->di;
+                 ^     ~~~~~~~
+/virtual/main.c:49:18: error: incompatible integer to pointer conversion initializing 'struct request *' with an expression of type 'unsigned long' [-Wint-conversion]
+ struct request *req = ctx->di;
+                 ^     ~~~~~~~
+2 errors generated.
+
+/virtual/main.c:73:19: error: incompatible integer to pointer conversion initializing 'struct pt_regs *' with an expression of type 'unsigned long' [-Wint-conversion]
+ struct pt_regs * __ctx = ctx->di;
+                  ^       ~~~~~~~
+/virtual/main.c:100:240: error: incompatible integer to pointer conversion passing 'u64' (aka 'unsigned long long') to parameter of type 'const void *' [-Wint-conversion]
+    data.ppid = ({ typeof(pid_t) _val; __builtin_memset(&_val, 0, sizeof(_val)); bpf_probe_read(&_val, sizeof(_val), (u64)&({ typeof(struct task_struct *) _val; __builtin_memset(&_val, 0, sizeof(_val)); bpf_probe_read(&_val, sizeof(_val), (u64)&task->real_parent); _val; })->tgid); _val; });
+                                                                                                                                                                                                                                               ^~~~~~~~~~~~~~~~~~~~~~~
+/virtual/main.c:100:118: error: incompatible integer to pointer conversion passing 'u64' (aka 'unsigned long long') to parameter of type 'const void *' [-Wint-conversion]
+    data.ppid = ({ typeof(pid_t) _val; __builtin_memset(&_val, 0, sizeof(_val)); bpf_probe_read(&_val, sizeof(_val), (u64)&({ typeof(struct task_struct *) _val; __builtin_memset(&_val, 0, sizeof(_val)); bpf_probe_read(&_val, sizeof(_val), (u64)&task->real_parent); _val; })->tgid); _val; });
+                                                                                                                     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ src/cc/frontends/clang/b_frontend_action.cc | 18 +++++++++---------
+ 1 file changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/src/cc/frontends/clang/b_frontend_action.cc b/src/cc/frontends/clang/b_frontend_action.cc
+index dbeba3e4..c0582464 100644
+--- a/src/cc/frontends/clang/b_frontend_action.cc
++++ b/src/cc/frontends/clang/b_frontend_action.cc
+@@ -517,9 +517,9 @@ bool ProbeVisitor::VisitUnaryOperator(UnaryOperator *E) {
+   string pre, post;
+   pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
+   if (cannot_fall_back_safely)
+-    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (u64)";
++    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (void *)";
+   else
+-    pre += " bpf_probe_read(&_val, sizeof(_val), (u64)";
++    pre += " bpf_probe_read(&_val, sizeof(_val), (void *)";
+   post = "); _val; })";
+   rewriter_.ReplaceText(expansionLoc(E->getOperatorLoc()), 1, pre);
+   rewriter_.InsertTextAfterToken(expansionLoc(GET_ENDLOC(sub)), post);
+@@ -581,9 +581,9 @@ bool ProbeVisitor::VisitMemberExpr(MemberExpr *E) {
+   string pre, post;
+   pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
+   if (cannot_fall_back_safely)
+-    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (u64)&";
++    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (void *)&";
+   else
+-    pre += " bpf_probe_read(&_val, sizeof(_val), (u64)&";
++    pre += " bpf_probe_read(&_val, sizeof(_val), (void *)&";
+   post = rhs + "); _val; })";
+   rewriter_.InsertText(expansionLoc(GET_BEGINLOC(E)), pre);
+   rewriter_.ReplaceText(expansionRange(SourceRange(member, GET_ENDLOC(E))), post);
+@@ -635,9 +635,9 @@ bool ProbeVisitor::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
+ 
+   pre = "({ typeof(" + E->getType().getAsString() + ") _val; __builtin_memset(&_val, 0, sizeof(_val));";
+   if (cannot_fall_back_safely)
+-    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (u64)((";
++    pre += " bpf_probe_read_kernel(&_val, sizeof(_val), (void *)((";
+   else
+-    pre += " bpf_probe_read(&_val, sizeof(_val), (u64)((";
++    pre += " bpf_probe_read(&_val, sizeof(_val), (void *)((";
+   if (isMemberDereference(base)) {
+     pre += "&";
+     // If the base of the array subscript is a member dereference, we'll rewrite
+@@ -747,8 +747,8 @@ void BTypeVisitor::genParamDirectAssign(FunctionDecl *D, string& preamble,
+       arg->addAttr(UnavailableAttr::CreateImplicit(C, "ptregs"));
+       size_t d = idx - 1;
+       const char *reg = calling_conv_regs[d];
+-      preamble += " " + text + " = " + fn_args_[0]->getName().str() + "->" +
+-                  string(reg) + ";";
++      preamble += " " + text + " = (" + arg->getType().getAsString() + ")" +
++                  fn_args_[0]->getName().str() + "->" + string(reg) + ";";
+     }
+   }
+ }
+@@ -762,7 +762,7 @@ void BTypeVisitor::genParamIndirectAssign(FunctionDecl *D, string& preamble,
+ 
+     if (idx == 0) {
+       new_ctx = "__" + arg->getName().str();
+-      preamble += " struct pt_regs * " + new_ctx + " = " +
++      preamble += " struct pt_regs * " + new_ctx + " = (void *)" +
+                   arg->getName().str() + "->" +
+                   string(calling_conv_regs[0]) + ";";
+     } else {
+-- 
+2.38.1
+
