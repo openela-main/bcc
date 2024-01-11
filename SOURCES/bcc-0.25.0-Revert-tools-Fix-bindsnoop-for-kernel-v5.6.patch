@@ -1,0 +1,43 @@
+From 73b15c15bdf3327c86de524ded528c6c6061ff3d Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 3 May 2023 16:16:52 +0200
+Subject: [PATCH] Revert "tools: Fix bindsnoop for kernel v5.6"
+
+This reverts commit f96fed0a3b9682ce52a35a02f72880395582d855.
+---
+ tools/bindsnoop.py | 10 +++-------
+ 1 file changed, 3 insertions(+), 7 deletions(-)
+
+diff --git a/tools/bindsnoop.py b/tools/bindsnoop.py
+index 07503352..ac3a8aa0 100755
+--- a/tools/bindsnoop.py
++++ b/tools/bindsnoop.py
+@@ -27,7 +27,7 @@
+ # 14-Feb-2020   Pavel Dubovitsky   Created this.
+ 
+ from __future__ import print_function, absolute_import, unicode_literals
+-from bcc import BPF
++from bcc import BPF, DEBUG_SOURCE
+ from bcc.containers import filter_by_containers
+ from bcc.utils import printb
+ import argparse
+@@ -243,14 +243,10 @@ static int bindsnoop_return(struct pt_regs *ctx, short ipver)
+     opts.fields.reuseport = bitfield >> 4 & 0x01;
+ 
+     // workaround for reading the sk_protocol bitfield (from tcpaccept.py):
+-    u16 protocol;
++    u8 protocol;
+     int gso_max_segs_offset = offsetof(struct sock, sk_gso_max_segs);
+     int sk_lingertime_offset = offsetof(struct sock, sk_lingertime);
+-
+-    // Since kernel v5.6 sk_protocol has its own u16 field
+-    if (sk_lingertime_offset - gso_max_segs_offset == 2)
+-        protocol = skp->sk_protocol;
+-    else if (sk_lingertime_offset - gso_max_segs_offset == 4)
++    if (sk_lingertime_offset - gso_max_segs_offset == 4)
+         // 4.10+ with little endian
+ #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+         protocol = *(u8 *)((u64)&skp->sk_gso_max_segs - 3);
+-- 
+2.40.1
+

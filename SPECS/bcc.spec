@@ -9,7 +9,7 @@
 
 Name:           bcc
 Version:        0.25.0
-Release:        2%{?dist}
+Release:        5%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
@@ -21,6 +21,11 @@ Patch3:         %{name}-%{version}-Fix-bpf_pseudo_fd-type-conversion-error.patch
 Patch4:         %{name}-%{version}-Fix-clang-15-int-to-pointer-conversion-errors.patch
 Patch5:         %{name}-%{version}-Revert-tools-tcpaccept-Fix-support-for-v5.6-kernels.patch
 Patch6:         %{name}-%{version}-Fix-get_kprobe_functions.patch
+Patch7:         %{name}-%{version}-Fix-a-llvm-signed-division-error-for-compactsnoop-to.patch
+Patch8:         %{name}-%{version}-tools-compactsnoop.py-Fix-raw_tracepoint-Invalid-arg.patch
+Patch9:         %{name}-%{version}-Revert-tools-Fix-bindsnoop-for-kernel-v5.6.patch
+Patch10:        %{name}-%{version}-tools-nfsslower.py-Fix-uninitialized-struct-pad-erro.patch
+Patch11:        %{name}-%{version}-Fix-a-llvm-compilation-error.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -218,6 +223,24 @@ done
 
 
 %changelog
+* Mon Jun 12 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-5
+- Fix LLVM 16 build
+
+* Thu Jun 08 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-4
+- Add missing patch.
+
+* Mon May 15 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-3
+- Rebuild with llvm 16 (RHBZ#2192949)
+- Fix compactsnoop (RHBZ#2042238)
+- Fix bindsnoop (RHBZ#2155200)
+- Fix nfsslower (RHBZ#2155163)
+
+* Fri Mar 03 2023 bstinson@redhat.com - 0.25.0-2.0.2
+- One final rebuild in CentOS Stream only
+
+* Wed Mar 01 2023 bstinson@redhat.com - 0.25.0-2.0.1
+- Rebuild in CentOS Stream only for library link issue
+
 * Tue Jan 10 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-2
 - Fix tcpdrop tool
 

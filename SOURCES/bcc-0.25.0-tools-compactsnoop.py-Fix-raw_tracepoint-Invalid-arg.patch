@@ -1,0 +1,71 @@
+From 2fd4457e52d56825e12a4037630aea3f82241a02 Mon Sep 17 00:00:00 2001
+From: Rong Tao <rongtao@cestc.cn>
+Date: Fri, 10 Feb 2023 23:28:55 +0800
+Subject: [PATCH 2/2] tools/compactsnoop.py: Fix raw_tracepoint Invalid
+ argument error
+
+kernel commit abd4349ff9b8("mm: compaction: cleanup the compaction trace
+events") change the arguments of 'mm_compaction_begin' from (start_pfn,
+migrate_pfn, free_pfn, end_pfn, sync) to (cc, start_pfn, end_pfn, sync),
+and change the arguments of 'mm_compaction_end' from (start_pfn,
+migrate_pfn, free_pfn, end_pfn, sync, ret) to (cc, start_pfn, end_pfn,
+sync, ret).
+
+Replacing RAW_TRACEPOINT_PROBE with TRACEPOINT_PROBE solves this problem
+and guarantees compatibility.
+
+    $ sudo ./compactsnoop.py
+    bpf_attach_raw_tracepoint (mm_compaction_begin): Invalid argument
+    Traceback (most recent call last):
+    File "/home/sdb/Git/bcc/tools/./compactsnoop.py", line 292, in <module>
+    b = BPF(text=bpf_text)
+        ^^^^^^^^^^^^^^^^^^
+    File "/usr/lib/python3.11/site-packages/bcc/__init__.py", line 483, in __init__
+    self._trace_autoload()
+    File "/usr/lib/python3.11/site-packages/bcc/__init__.py", line 1462, in _trace_autoload
+    self.attach_raw_tracepoint(tp=tp, fn_name=fn.name)
+    File "/usr/lib/python3.11/site-packages/bcc/__init__.py", line 1055, in attach_raw_tracepoint
+    raise Exception("Failed to attach BPF to raw tracepoint")
+    Exception: Failed to attach BPF to raw tracepoint
+
+Signed-off-by: Rong Tao <rongtao@cestc.cn>
+---
+ tools/compactsnoop.py | 13 ++++---------
+ 1 file changed, 4 insertions(+), 9 deletions(-)
+
+diff --git a/tools/compactsnoop.py b/tools/compactsnoop.py
+index bf3c9b4b..e9baa9b4 100755
+--- a/tools/compactsnoop.py
++++ b/tools/compactsnoop.py
+@@ -237,11 +237,9 @@ RAW_TRACEPOINT_PROBE(mm_compaction_suitable)
+     return 0;
+ }
+ 
+-RAW_TRACEPOINT_PROBE(mm_compaction_begin)
++TRACEPOINT_PROBE(compaction, mm_compaction_begin)
+ {
+-    // TP_PROTO(unsigned long zone_start, unsigned long migrate_pfn,
+-    //          unsigned long free_pfn, unsigned long zone_end, bool sync)
+-    bool sync = (bool)ctx->args[4];
++    bool sync = args->sync;
+ 
+     u64 id = bpf_get_current_pid_tgid();
+     struct val_t *valp = start.lookup(&id);
+@@ -255,12 +253,9 @@ RAW_TRACEPOINT_PROBE(mm_compaction_begin)
+     return 0;
+ }
+ 
+-RAW_TRACEPOINT_PROBE(mm_compaction_end)
++TRACEPOINT_PROBE(compaction, mm_compaction_end)
+ {
+-    // TP_PROTO(unsigned long zone_start, unsigned long migrate_pfn,
+-    //          unsigned long free_pfn, unsigned long zone_end, bool sync,
+-    //          int status)
+-    submit_event(ctx, ctx->args[5]);
++    submit_event(args, args->status);
+     return 0;
+ }
+ """
+-- 
+2.39.2
+

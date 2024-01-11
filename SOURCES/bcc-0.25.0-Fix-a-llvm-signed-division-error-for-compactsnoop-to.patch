@@ -1,0 +1,42 @@
+From 0d563f713780eb274ebf995660917482452c127e Mon Sep 17 00:00:00 2001
+From: Yonghong Song <yhs@fb.com>
+Date: Fri, 26 Aug 2022 16:34:24 -0700
+Subject: [PATCH 1/2] Fix a llvm signed division error for compactsnoop tool
+
+Fix issue #4182.
+llvm doesn't support signed division and an assertion error
+will happen when the IR contains sdiv. The reason is
+due to code
+  zone - zone_pgdat->node_zones
+where zone and zone_pgdat->node_zones are pointers to
+struct zone (with size 1664). So effectively the above
+is equivalent to
+  ((void *)zone - (void *)zone_pgdat->node_zones)/sizeof(struct zone)
+which is converted to sdiv insn.
+llvm11 seems okay and I didn't investigate why. But llvm14 and
+latest llvm16 failed with compiler fatal error.
+
+To fix the issue let us replace the above '(void *)' as
+'(u64)' and then the udiv will be used for the division.
+
+Signed-off-by: Yonghong Song <yhs@fb.com>
+---
+ tools/compactsnoop.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tools/compactsnoop.py b/tools/compactsnoop.py
+index 9daaf485..bf3c9b4b 100755
+--- a/tools/compactsnoop.py
++++ b/tools/compactsnoop.py
+@@ -124,7 +124,7 @@ static inline int zone_idx_(struct zone *zone)
+ {
+     struct pglist_data *zone_pgdat = NULL;
+     bpf_probe_read_kernel(&zone_pgdat, sizeof(zone_pgdat), &zone->zone_pgdat);
+-    return zone - zone_pgdat->node_zones;
++    return ((u64)zone - (u64)zone_pgdat->node_zones)/sizeof(struct zone);
+ }
+ 
+ #ifdef EXTNEDED_FIELDS
+-- 
+2.39.2
+
