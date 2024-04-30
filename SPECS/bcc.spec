@@ -10,7 +10,7 @@
 %endif
 %endif
 
-%ifarch x86_64 ppc64 ppc64le aarch64
+%ifarch x86_64 ppc64 ppc64le aarch64 s390x
 %bcond_without libbpf_tools
 %else
 %bcond_with libbpf_tools
@@ -24,20 +24,21 @@
 
 
 Name:           bcc
-Version:        0.26.0
-Release:        4%{?dist}
+Version:        0.28.0
+Release:        5%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
-Patch0:         %%{name}-%%{version}-tools-nfsslower.py-Fix-uninitialized-struct-pad-erro.patch
-Patch1:         %%{name}-%%{version}-tools-slabratetop-Fix-error-incomplete-definition-of.patch
-Patch2:         %%{name}-%%{version}-tools-readahead-Fix-Failed-to-attach-BPF-program-ent.patch
-Patch3:         %%{name}-%%{version}-tools-compactsnoop.py-Fix-raw_tracepoint-Invalid-arg.patch
-Patch4:         %%{name}-%%{version}-killsnoop-add-missing-s-and-T-options-to-the-synopsi.patch
-Patch5:         %%{name}-%%{version}-tools-funcslower-fix-printing-of-folded-stacks.patch
-Patch6:         %%{name}-%%{version}-tools-deadlock-Add-an-option-to-set-the-maximum-numb.patch
-Patch7:         %%{name}-%%{version}-sync-with-latest-libbpf-repo.patch
+Patch0:         %%{name}-%%{version}-tools-tcpstates-fix-context-ptr-modified-error.patch
+Patch1:         %%{name}-%%{version}-tools-tcpstates-fix-IPv6-journal.patch
+Patch2:         %%{name}-%%{version}-tools-Add-support-for-the-new-block_io_-tracepoints.patch
+Patch3:         %%{name}-%%{version}-tools-trace-don-t-raise-an-exception-in-a-ctype-call.patch
+Patch4:         %%{name}-%%{version}-libbpf-tools-add-block_io_-start-done-tracepoints-su.patch
+Patch5:         %%{name}-%%{version}-libbpf-tools-Add-s390x-support.patch
+Patch6:         %%{name}-%%{version}-Fixing-pvalloc-memleak-test.patch
+Patch7:         %%{name}-%%{version}-Skipping-USDT-tests-for-Power-processor.patch
+Patch8:         %%{name}-%%{version}-Adding-memory-zones-for-Power-server.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -261,6 +262,29 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
+* Wed Dec 13 2023 Jerome Marchand <jmarchan@redhat.com> - 0.28.0-5
+- Fix libbpf bio tools (RHEL-19368)
+- Add S390x support to libbpf-tools (RHEL-16325)
+- Power enhancements(RHEL-11477)
+
+* Tue Nov 21 2023 Jerome Marchand <jmarchan@redhat.com> - 0.28.0-4
+- Rebuild with LLVM 17 in the side tag (RHEL-10591)
+
+* Tue Nov 21 2023 Jerome Marchand <jmarchan@redhat.com> - 0.28.0-3
+- Rebuild with LLVM 17 (RHEL-10591)
+
+* Mon Nov 06 2023 Jerome Marchand <jmarchan@redhat.com> - 0.28.0-2
+- Fix trace tool (RHEL-8605)
+
+* Mon Oct 23 2023 Jerome Marchand <jmarchan@redhat.com> - 0.28.0-1
+- Rebase to v0.28.0 (RHEL-9976)
+- Rebuild with LLVM 17 (RHEL-10591)
+- Fix bpf-biosnoop out of bound access (RHEL-8664)
+- Fix kvmexit missing VM exit reasons and statistics (RHEL-8702)
+- Fix multi-word array type handling (RHEL-8674)
+- Fix tcpstates -Y (RHEL-8490)
+- Fix bio tools (RHEL-8553)
+
 * Wed Aug 09 2023 Jerome Marchand <jmarchan@redhat.com> - 0.26.0-4
 - Fix tcpretrans (rhbz#2226967)
 

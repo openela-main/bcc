@@ -1,0 +1,156 @@
+From 0d1a67ba9490aabbb874819d8d07b1868c8c2b1d Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 1 Feb 2023 17:30:03 +0100
+Subject: [PATCH 2/2] tools/tcpstates: fix IPv6 journal
+
+When logging ipv6 state change, journal_fields tries to pack
+event.addr and event.daddr, which is not an integer in this, to
+present a bytes-like object to socket.inet_ntop. This can be fixed by
+having a similar type for [sd]addr for IPv4 and IPv6. Making both an
+array of u32 solves the issue by presenting a bytes-like object
+directly to inet_ntop, without the need for the struct packing stage.
+
+Also  now, the similar behavior, makes it easier to factor code for
+IPv4 and IPv6.
+
+It solves the following error:
+/usr/share/bcc/tools/tcpstates  -Y
+SKADDR           C-PID C-COMM     LADDR           LPORT RADDR           RPORT OLDSTATE    -> NEWSTATE    MS
+ffff8b2e83e56180 0     swapper/9  ::              22    ::              0     LISTEN      -> SYN_RECV    0.000
+Exception ignored on calling ctypes callback function: <function PerfEventArray._open_perf_buffer.<locals>.raw_cb_ at 0x7f894c8d7f70>
+Traceback (most recent call last):
+  File "/usr/lib/python3.9/site-packages/bcc/table.py", line 982, in raw_cb_
+    callback(cpu, data, size)
+  File "/usr/share/bcc/tools/tcpstates", line 419, in print_ipv6_event
+    journal.send(**journal_fields(event, AF_INET6))
+  File "/usr/share/bcc/tools/tcpstates", line 348, in journal_fields
+    'OBJECT_' + addr_pfx + '_SOURCE_ADDRESS': inet_ntop(addr_family, pack("I", event.saddr)),
+struct.error: required argument is not an integer
+ffff8b2e83e56180 0     swapper/9  2620:52:0:2580:5054:ff:fe6b:6f1f 22    2620:52:0:2b11:2f5e:407d:b35d:4663 60396 SYN_RECV    -> ESTABLISHED 0.010
+Exception ignored on calling ctypes callback function: <function PerfEventArray._open_perf_buffer.<locals>.raw_cb_ at 0x7f894c8d7f70>
+Traceback (most recent call last):
+  File "/usr/lib/python3.9/site-packages/bcc/table.py", line 982, in raw_cb_
+    callback(cpu, data, size)
+  File "/usr/share/bcc/tools/tcpstates", line 419, in print_ipv6_event
+    journal.send(**journal_fields(event, AF_INET6))
+  File "/usr/share/bcc/tools/tcpstates", line 348, in journal_fields
+    'OBJECT_' + addr_pfx + '_SOURCE_ADDRESS': inet_ntop(addr_family, pack("I", event.saddr)),
+struct.error: required argument is not an integer
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ tools/tcpstates.py | 55 +++++++++++++++++-----------------------------
+ 1 file changed, 20 insertions(+), 35 deletions(-)
+
+diff --git a/tools/tcpstates.py b/tools/tcpstates.py
+index 9b2ccfa4..6c845c9b 100755
+--- a/tools/tcpstates.py
++++ b/tools/tcpstates.py
+@@ -19,7 +19,6 @@ from __future__ import print_function
+ from bcc import BPF
+ import argparse
+ from socket import inet_ntop, AF_INET, AF_INET6
+-from struct import pack
+ from time import strftime, time
+ from os import getuid
+ 
+@@ -78,8 +77,8 @@ BPF_HASH(last, struct sock *, u64);
+ struct ipv4_data_t {
+     u64 ts_us;
+     u64 skaddr;
+-    u32 saddr;
+-    u32 daddr;
++    u32 saddr[1];
++    u32 daddr[1];
+     u64 span_us;
+     u32 pid;
+     u16 lport;
+@@ -93,8 +92,8 @@ BPF_PERF_OUTPUT(ipv4_events);
+ struct ipv6_data_t {
+     u64 ts_us;
+     u64 skaddr;
+-    unsigned __int128 saddr;
+-    unsigned __int128 daddr;
++    u32 saddr[4];
++    u32 daddr[4];
+     u64 span_us;
+     u32 pid;
+     u16 lport;
+@@ -350,9 +349,9 @@ format_string = ("%-16x %-5d %-10.10s %s%-15s %-5d %-15s %-5d %-11s " +
+         'OBJECT_PID': str(event.pid),
+         'OBJECT_COMM': event.task.decode('utf-8', 'replace'),
+         # Custom fields, aka "stuff we sort of made up".
+-        'OBJECT_' + addr_pfx + '_SOURCE_ADDRESS': inet_ntop(addr_family, pack("I", event.saddr)),
++        'OBJECT_' + addr_pfx + '_SOURCE_ADDRESS': inet_ntop(addr_family, event.saddr),
+         'OBJECT_TCP_SOURCE_PORT': str(event.lport),
+-        'OBJECT_' + addr_pfx + '_DESTINATION_ADDRESS': inet_ntop(addr_family, pack("I", event.daddr)),
++        'OBJECT_' + addr_pfx + '_DESTINATION_ADDRESS': inet_ntop(addr_family, event.daddr),
+         'OBJECT_TCP_DESTINATION_PORT': str(event.dport),
+         'OBJECT_TCP_OLD_STATE': tcpstate2str(event.oldstate),
+         'OBJECT_TCP_NEW_STATE': tcpstate2str(event.newstate),
+@@ -373,8 +372,7 @@ format_string = ("%-16x %-5d %-10.10s %s%-15s %-5d %-15s %-5d %-11s " +
+     return fields
+ 
+ # process event
+-def print_ipv4_event(cpu, data, size):
+-    event = b["ipv4_events"].event(data)
++def print_event(event, addr_family):
+     global start_ts
+     if args.time:
+         if args.csv:
+@@ -389,39 +387,26 @@ format_string = ("%-16x %-5d %-10.10s %s%-15s %-5d %-15s %-5d %-11s " +
+             print("%.6f," % delta_s, end="")
+         else:
+             print("%-9.6f " % delta_s, end="")
++    if addr_family == AF_INET:
++        version = "4"
++    else:
++        version = "6"
+     print(format_string % (event.skaddr, event.pid, event.task.decode('utf-8', 'replace'),
+-        "4" if args.wide or args.csv else "",
+-        inet_ntop(AF_INET, pack("I", event.saddr)), event.lport,
+-        inet_ntop(AF_INET, pack("I", event.daddr)), event.dport,
++        version if args.wide or args.csv else "",
++        inet_ntop(addr_family, event.saddr), event.lport,
++        inet_ntop(addr_family, event.daddr), event.dport,
+         tcpstate2str(event.oldstate), tcpstate2str(event.newstate),
+         float(event.span_us) / 1000))
+     if args.journal:
+-        journal.send(**journal_fields(event, AF_INET))
++        journal.send(**journal_fields(event, addr_family))
++
++def print_ipv4_event(cpu, data, size):
++    event = b["ipv4_events"].event(data)
++    print_event(event, AF_INET)
+ 
+ def print_ipv6_event(cpu, data, size):
+     event = b["ipv6_events"].event(data)
+-    global start_ts
+-    if args.time:
+-        if args.csv:
+-            print("%s," % strftime("%H:%M:%S"), end="")
+-        else:
+-            print("%-8s " % strftime("%H:%M:%S"), end="")
+-    if args.timestamp:
+-        if start_ts == 0:
+-            start_ts = event.ts_us
+-        delta_s = (float(event.ts_us) - start_ts) / 1000000
+-        if args.csv:
+-            print("%.6f," % delta_s, end="")
+-        else:
+-            print("%-9.6f " % delta_s, end="")
+-    print(format_string % (event.skaddr, event.pid, event.task.decode('utf-8', 'replace'),
+-        "6" if args.wide or args.csv else "",
+-        inet_ntop(AF_INET6, event.saddr), event.lport,
+-        inet_ntop(AF_INET6, event.daddr), event.dport,
+-        tcpstate2str(event.oldstate), tcpstate2str(event.newstate),
+-        float(event.span_us) / 1000))
+-    if args.journal:
+-        journal.send(**journal_fields(event, AF_INET6))
++    print_event(event, AF_INET6)
+ 
+ # initialize BPF
+ b = BPF(text=bpf_text)
+-- 
+2.41.0
+

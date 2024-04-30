@@ -1,0 +1,476 @@
+From 60860bf3a400dcf72b4026fb2973803cfb12ccf1 Mon Sep 17 00:00:00 2001
+From: mickey_zhu <mickey_zhu@realsil.com.cn>
+Date: Tue, 27 Jun 2023 16:32:44 +0800
+Subject: [PATCH] libbpf-tools: add block_io_{start,done} tracepoints support
+ to bio tools
+
+Some bio tools fail to kprobe blk_account_io_{start,done} after v5.17,
+because they become inlined, see [0]. To fix this issue, tracepoints
+blick_io_{start,done} are introcuded in kernel, see[1].
+
+Update related bio tools to support new tracepoints, and also simplify
+attach.
+
+[0] Kernel commit 450b7879e345 (block: move blk_account_io_{start,done} to blk-mq.c)
+[1] Kernel commit 5a80bd075f3b (block: introduce block_io_start/block_io_done tracepoints)
+
+Change-Id: I62b957abd7ce2901eb114bd57c78938e4f083e4d
+Signed-off-by: Mickey Zhu <mickey_zhu@realsil.com.cn>
+---
+ libbpf-tools/biosnoop.bpf.c  |  9 ++++
+ libbpf-tools/biosnoop.c      | 78 +++++++++++++--------------------
+ libbpf-tools/biostacks.bpf.c | 46 +++++++++++++------
+ libbpf-tools/biostacks.c     | 85 +++++++++++++++++++++---------------
+ libbpf-tools/biotop.bpf.c    | 44 +++++++++++++++++--
+ libbpf-tools/biotop.c        | 59 ++++++++++++++++---------
+ 6 files changed, 199 insertions(+), 122 deletions(-)
+
+diff --git a/libbpf-tools/biosnoop.bpf.c b/libbpf-tools/biosnoop.bpf.c
+index b791555f..fcc5c5ce 100644
+--- a/libbpf-tools/biosnoop.bpf.c
++++ b/libbpf-tools/biosnoop.bpf.c
+@@ -76,6 +76,15 @@ int BPF_PROG(blk_account_io_start, struct request *rq)
+ 	return trace_pid(rq);
+ }
+ 
++SEC("tp_btf/block_io_start")
++int BPF_PROG(block_io_start, struct request *rq)
++{
++	if (filter_cg && !bpf_current_task_under_cgroup(&cgroup_map, 0))
++		return 0;
++
++	return trace_pid(rq);
++}
++
+ SEC("kprobe/blk_account_io_merge_bio")
+ int BPF_KPROBE(blk_account_io_merge_bio, struct request *rq)
+ {
+diff --git a/libbpf-tools/biosnoop.c b/libbpf-tools/biosnoop.c
+index 21773729..f9468900 100644
+--- a/libbpf-tools/biosnoop.c
++++ b/libbpf-tools/biosnoop.c
+@@ -212,6 +212,16 @@ void handle_lost_events(void *ctx, int cpu, __u64 lost_cnt)
+ 	fprintf(stderr, "lost %llu events on CPU #%d\n", lost_cnt, cpu);
+ }
+ 
++static void blk_account_io_set_attach_target(struct biosnoop_bpf *obj)
++{
++	if (fentry_can_attach("blk_account_io_start", NULL))
++		bpf_program__set_attach_target(obj->progs.blk_account_io_start,
++					       0, "blk_account_io_start");
++	else
++		bpf_program__set_attach_target(obj->progs.blk_account_io_start,
++					       0, "__blk_account_io_start");
++}
++
+ int main(int argc, char **argv)
+ {
+ 	const struct partition *partition;
+@@ -260,12 +270,23 @@ int main(int argc, char **argv)
+ 	obj->rodata->filter_cg = env.cg;
+ 	obj->rodata->min_ns = env.min_lat_ms * 1000000;
+ 
+-	if (fentry_can_attach("blk_account_io_start", NULL))
+-		bpf_program__set_attach_target(obj->progs.blk_account_io_start, 0,
+-					       "blk_account_io_start");
+-	else
+-		bpf_program__set_attach_target(obj->progs.blk_account_io_start, 0,
+-					       "__blk_account_io_start");
++	if (tracepoint_exists("block", "block_io_start"))
++		bpf_program__set_autoload(obj->progs.blk_account_io_start, false);
++	else {
++		bpf_program__set_autoload(obj->progs.block_io_start, false);
++		blk_account_io_set_attach_target(obj);
++	}
++
++	ksyms = ksyms__load();
++	if (!ksyms) {
++		fprintf(stderr, "failed to load kallsyms\n");
++		goto cleanup;
++	}
++	if (!ksyms__get_symbol(ksyms, "blk_account_io_merge_bio"))
++		bpf_program__set_autoload(obj->progs.blk_account_io_merge_bio, false);
++
++	if (!env.queued)
++		bpf_program__set_autoload(obj->progs.block_rq_insert, false);
+ 
+ 	err = biosnoop_bpf__load(obj);
+ 	if (err) {
+@@ -288,48 +309,9 @@ int main(int argc, char **argv)
+ 		}
+ 	}
+ 
+-	obj->links.blk_account_io_start = bpf_program__attach(obj->progs.blk_account_io_start);
+-	if (!obj->links.blk_account_io_start) {
+-		err = -errno;
+-		fprintf(stderr, "failed to attach blk_account_io_start: %s\n",
+-			strerror(-err));
+-		goto cleanup;
+-	}
+-	ksyms = ksyms__load();
+-	if (!ksyms) {
+-		err = -ENOMEM;
+-		fprintf(stderr, "failed to load kallsyms\n");
+-		goto cleanup;
+-	}
+-	if (ksyms__get_symbol(ksyms, "blk_account_io_merge_bio")) {
+-		obj->links.blk_account_io_merge_bio =
+-			bpf_program__attach(obj->progs.blk_account_io_merge_bio);
+-		if (!obj->links.blk_account_io_merge_bio) {
+-			err = -errno;
+-			fprintf(stderr, "failed to attach blk_account_io_merge_bio: %s\n",
+-				strerror(-err));
+-			goto cleanup;
+-		}
+-	}
+-	if (env.queued) {
+-		obj->links.block_rq_insert =
+-			bpf_program__attach(obj->progs.block_rq_insert);
+-		if (!obj->links.block_rq_insert) {
+-			err = -errno;
+-			fprintf(stderr, "failed to attach block_rq_insert: %s\n", strerror(-err));
+-			goto cleanup;
+-		}
+-	}
+-	obj->links.block_rq_issue = bpf_program__attach(obj->progs.block_rq_issue);
+-	if (!obj->links.block_rq_issue) {
+-		err = -errno;
+-		fprintf(stderr, "failed to attach block_rq_issue: %s\n", strerror(-err));
+-		goto cleanup;
+-	}
+-	obj->links.block_rq_complete = bpf_program__attach(obj->progs.block_rq_complete);
+-	if (!obj->links.block_rq_complete) {
+-		err = -errno;
+-		fprintf(stderr, "failed to attach block_rq_complete: %s\n", strerror(-err));
++	err = biosnoop_bpf__attach(obj);
++	if (err) {
++		fprintf(stderr, "failed to attach BPF programs: %d\n", err);
+ 		goto cleanup;
+ 	}
+ 
+diff --git a/libbpf-tools/biostacks.bpf.c b/libbpf-tools/biostacks.bpf.c
+index c3950910..0ca69880 100644
+--- a/libbpf-tools/biostacks.bpf.c
++++ b/libbpf-tools/biostacks.bpf.c
+@@ -67,20 +67,8 @@ int trace_start(void *ctx, struct request *rq, bool merge_bio)
+ 	return 0;
+ }
+ 
+-SEC("fentry/blk_account_io_start")
+-int BPF_PROG(blk_account_io_start, struct request *rq)
+-{
+-	return trace_start(ctx, rq, false);
+-}
+-
+-SEC("kprobe/blk_account_io_merge_bio")
+-int BPF_KPROBE(blk_account_io_merge_bio, struct request *rq)
+-{
+-	return trace_start(ctx, rq, true);
+-}
+-
+-SEC("fentry/blk_account_io_done")
+-int BPF_PROG(blk_account_io_done, struct request *rq)
++static __always_inline
++int trace_done(void *ctx, struct request *rq)
+ {
+ 	u64 slot, ts = bpf_ktime_get_ns();
+ 	struct internal_rqinfo *i_rqinfop;
+@@ -110,4 +98,34 @@ int BPF_PROG(blk_account_io_done, struct request *rq)
+ 	return 0;
+ }
+ 
++SEC("kprobe/blk_account_io_merge_bio")
++int BPF_KPROBE(blk_account_io_merge_bio, struct request *rq)
++{
++	return trace_start(ctx, rq, true);
++}
++
++SEC("fentry/blk_account_io_start")
++int BPF_PROG(blk_account_io_start, struct request *rq)
++{
++	return trace_start(ctx, rq, false);
++}
++
++SEC("fentry/blk_account_io_done")
++int BPF_PROG(blk_account_io_done, struct request *rq)
++{
++	return trace_done(ctx, rq);
++}
++
++SEC("tp_btf/block_io_start")
++int BPF_PROG(block_io_start, struct request *rq)
++{
++	return trace_start(ctx, rq, false);
++}
++
++SEC("tp_btf/block_io_done")
++int BPF_PROG(block_io_done, struct request *rq)
++{
++	return trace_done(ctx, rq);
++}
++
+ char LICENSE[] SEC("license") = "GPL";
+diff --git a/libbpf-tools/biostacks.c b/libbpf-tools/biostacks.c
+index e1878d1f..e7875f76 100644
+--- a/libbpf-tools/biostacks.c
++++ b/libbpf-tools/biostacks.c
+@@ -128,6 +128,39 @@ void print_map(struct ksyms *ksyms, struct partitions *partitions, int fd)
+ 	return;
+ }
+ 
++static bool has_block_io_tracepoints(void)
++{
++	return tracepoint_exists("block", "block_io_start") &&
++		tracepoint_exists("block", "block_io_done");
++}
++
++static void disable_block_io_tracepoints(struct biostacks_bpf *obj)
++{
++	bpf_program__set_autoload(obj->progs.block_io_start, false);
++	bpf_program__set_autoload(obj->progs.block_io_done, false);
++}
++
++static void disable_blk_account_io_fentry(struct biostacks_bpf *obj)
++{
++	bpf_program__set_autoload(obj->progs.blk_account_io_start, false);
++	bpf_program__set_autoload(obj->progs.blk_account_io_done, false);
++}
++
++static void blk_account_io_set_attach_target(struct biostacks_bpf *obj)
++{
++	if (fentry_can_attach("blk_account_io_start", NULL)) {
++		bpf_program__set_attach_target(obj->progs.blk_account_io_start,
++					       0, "blk_account_io_start");
++		bpf_program__set_attach_target(obj->progs.blk_account_io_done,
++					       0, "blk_account_io_done");
++	} else {
++		bpf_program__set_attach_target(obj->progs.blk_account_io_start,
++					       0, "__blk_account_io_start");
++		bpf_program__set_attach_target(obj->progs.blk_account_io_done,
++					       0, "__blk_account_io_done");
++	}
++}
++
+ int main(int argc, char **argv)
+ {
+ 	struct partitions *partitions = NULL;
+@@ -172,50 +205,30 @@ int main(int argc, char **argv)
+ 
+ 	obj->rodata->targ_ms = env.milliseconds;
+ 
+-	if (fentry_can_attach("blk_account_io_start", NULL)) {
+-		bpf_program__set_attach_target(obj->progs.blk_account_io_start, 0,
+-					       "blk_account_io_start");
+-		bpf_program__set_attach_target(obj->progs.blk_account_io_done, 0,
+-					       "blk_account_io_done");
+-	} else {
+-		bpf_program__set_attach_target(obj->progs.blk_account_io_start, 0,
+-					       "__blk_account_io_start");
+-		bpf_program__set_attach_target(obj->progs.blk_account_io_done, 0,
+-					       "__blk_account_io_done");
+-	}
+-
+-	err = biostacks_bpf__load(obj);
+-	if (err) {
+-		fprintf(stderr, "failed to load BPF object: %d\n", err);
+-		goto cleanup;
++	if (has_block_io_tracepoints())
++		disable_blk_account_io_fentry(obj);
++	else {
++		disable_block_io_tracepoints(obj);
++		blk_account_io_set_attach_target(obj);
+ 	}
+ 
+-	obj->links.blk_account_io_start = bpf_program__attach(obj->progs.blk_account_io_start);
+-	if (!obj->links.blk_account_io_start) {
+-		err = -errno;
+-		fprintf(stderr, "failed to attach blk_account_io_start: %s\n", strerror(-err));
+-		goto cleanup;
+-	}
+ 	ksyms = ksyms__load();
+ 	if (!ksyms) {
+ 		fprintf(stderr, "failed to load kallsyms\n");
+ 		goto cleanup;
+ 	}
+-	if (ksyms__get_symbol(ksyms, "blk_account_io_merge_bio")) {
+-		obj->links.blk_account_io_merge_bio =
+-			bpf_program__attach(obj->progs.blk_account_io_merge_bio);
+-		if (!obj->links.blk_account_io_merge_bio) {
+-			err = -errno;
+-			fprintf(stderr, "failed to attach blk_account_io_merge_bio: %s\n",
+-				strerror(-err));
+-			goto cleanup;
+-		}
++	if (!ksyms__get_symbol(ksyms, "blk_account_io_merge_bio"))
++		bpf_program__set_autoload(obj->progs.blk_account_io_merge_bio, false);
++
++	err = biostacks_bpf__load(obj);
++	if (err) {
++		fprintf(stderr, "failed to load BPF object: %d\n", err);
++		goto cleanup;
+ 	}
+-	obj->links.blk_account_io_done = bpf_program__attach(obj->progs.blk_account_io_done);
+-	if (!obj->links.blk_account_io_done) {
+-		err = -errno;
+-		fprintf(stderr, "failed to attach blk_account_io_done: %s\n",
+-			strerror(-err));
++
++	err = biostacks_bpf__attach(obj);
++	if (err) {
++		fprintf(stderr, "failed to attach BPF programs: %d\n", err);
+ 		goto cleanup;
+ 	}
+ 
+diff --git a/libbpf-tools/biotop.bpf.c b/libbpf-tools/biotop.bpf.c
+index 226e32d3..07631378 100644
+--- a/libbpf-tools/biotop.bpf.c
++++ b/libbpf-tools/biotop.bpf.c
+@@ -30,8 +30,8 @@ struct {
+ 	__type(value, struct val_t);
+ } counts SEC(".maps");
+ 
+-SEC("kprobe")
+-int BPF_KPROBE(blk_account_io_start, struct request *req)
++static __always_inline
++int trace_start(struct request *req)
+ {
+ 	struct who_t who = {};
+ 
+@@ -56,8 +56,8 @@ int BPF_KPROBE(blk_mq_start_request, struct request *req)
+ 	return 0;
+ }
+ 
+-SEC("kprobe")
+-int BPF_KPROBE(blk_account_io_done, struct request *req, u64 now)
++static __always_inline
++int trace_done(struct request *req)
+ {
+ 	struct val_t *valp, zero = {};
+ 	struct info_t info = {};
+@@ -103,4 +103,40 @@ int BPF_KPROBE(blk_account_io_done, struct request *req, u64 now)
+ 	return 0;
+ }
+ 
++SEC("kprobe/blk_account_io_start")
++int BPF_KPROBE(blk_account_io_start, struct request *req)
++{
++	return trace_start(req);
++}
++
++SEC("kprobe/blk_account_io_done")
++int BPF_KPROBE(blk_account_io_done, struct request *req)
++{
++	return trace_done(req);
++}
++
++SEC("kprobe/__blk_account_io_start")
++int BPF_KPROBE(__blk_account_io_start, struct request *req)
++{
++	return trace_start(req);
++}
++
++SEC("kprobe/__blk_account_io_done")
++int BPF_KPROBE(__blk_account_io_done, struct request *req)
++{
++	return trace_done(req);
++}
++
++SEC("tp_btf/block_io_start")
++int BPF_PROG(block_io_start, struct request *req)
++{
++	return trace_start(req);
++}
++
++SEC("tp_btf/block_io_done")
++int BPF_PROG(block_io_done, struct request *req)
++{
++	return trace_done(req);
++}
++
+ char LICENSE[] SEC("license") = "GPL";
+diff --git a/libbpf-tools/biotop.c b/libbpf-tools/biotop.c
+index 75484281..5b3a7cf3 100644
+--- a/libbpf-tools/biotop.c
++++ b/libbpf-tools/biotop.c
+@@ -354,6 +354,38 @@ static int print_stat(struct biotop_bpf *obj)
+ 	return err;
+ }
+ 
++static bool has_block_io_tracepoints(void)
++{
++	return tracepoint_exists("block", "block_io_start") &&
++		tracepoint_exists("block", "block_io_done");
++}
++
++static void disable_block_io_tracepoints(struct biotop_bpf *obj)
++{
++	bpf_program__set_autoload(obj->progs.block_io_start, false);
++	bpf_program__set_autoload(obj->progs.block_io_done, false);
++}
++
++static void disable_blk_account_io_kprobes(struct biotop_bpf *obj)
++{
++	bpf_program__set_autoload(obj->progs.blk_account_io_start, false);
++	bpf_program__set_autoload(obj->progs.blk_account_io_done, false);
++	bpf_program__set_autoload(obj->progs.__blk_account_io_start, false);
++	bpf_program__set_autoload(obj->progs.__blk_account_io_done, false);
++}
++
++static void blk_account_io_set_autoload(struct biotop_bpf *obj,
++					struct ksyms *ksyms)
++{
++	if (!ksyms__get_symbol(ksyms, "__blk_account_io_start")) {
++		bpf_program__set_autoload(obj->progs.__blk_account_io_start, false);
++		bpf_program__set_autoload(obj->progs.__blk_account_io_done, false);
++	} else {
++		bpf_program__set_autoload(obj->progs.blk_account_io_start, false);
++		bpf_program__set_autoload(obj->progs.blk_account_io_done, false);
++	}
++}
++
+ int main(int argc, char **argv)
+ {
+ 	static const struct argp argp = {
+@@ -386,32 +418,19 @@ int main(int argc, char **argv)
+ 		goto cleanup;
+ 	}
+ 
++	if (has_block_io_tracepoints())
++		disable_blk_account_io_kprobes(obj);
++	else {
++		disable_block_io_tracepoints(obj);
++		blk_account_io_set_autoload(obj, ksyms);
++	}
++
+ 	err = biotop_bpf__load(obj);
+ 	if (err) {
+ 		warn("failed to load BPF object: %d\n", err);
+ 		goto cleanup;
+ 	}
+ 
+-	if (ksyms__get_symbol(ksyms, "__blk_account_io_start"))
+-		obj->links.blk_account_io_start = bpf_program__attach_kprobe(obj->progs.blk_account_io_start, false, "__blk_account_io_start");
+-	else
+-		obj->links.blk_account_io_start = bpf_program__attach_kprobe(obj->progs.blk_account_io_start, false, "blk_account_io_start");
+-
+-	if (!obj->links.blk_account_io_start) {
+-		warn("failed to load attach blk_account_io_start\n");
+-		goto cleanup;
+-	}
+-
+-	if (ksyms__get_symbol(ksyms, "__blk_account_io_done"))
+-		obj->links.blk_account_io_done = bpf_program__attach_kprobe(obj->progs.blk_account_io_done, false, "__blk_account_io_done");
+-	else
+-		obj->links.blk_account_io_done = bpf_program__attach_kprobe(obj->progs.blk_account_io_done, false, "blk_account_io_done");
+-
+-	if (!obj->links.blk_account_io_done) {
+-		warn("failed to load attach blk_account_io_done\n");
+-		goto cleanup;
+-	}
+-
+ 	err = biotop_bpf__attach(obj);
+ 	if (err) {
+ 		warn("failed to attach BPF programs: %d\n", err);
+-- 
+2.41.0
+

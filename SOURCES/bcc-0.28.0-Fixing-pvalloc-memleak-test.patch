@@ -1,0 +1,45 @@
+From e6493835a28c08c45fd374e70dba7aa66f700d08 Mon Sep 17 00:00:00 2001
+From: Abhishek Dubey <adubey@linux.ibm.com>
+Date: Tue, 14 Nov 2023 03:54:19 -0500
+Subject: [PATCH 2/4] Fixing pvalloc memleak test
+
+Request to allocate 30K bytes using pvalloc(), results
+in allocating 3*64Kb(on 64Kb pagesize system). The assertion
+expects leak to be 30Kb, whereas leaked memory is much more
+due to pvalloc's implementation for power.
+
+Signed-off-by: Abhishek Dubey <adubey@linux.ibm.com>
+---
+ tests/python/test_tools_memleak.py | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/tests/python/test_tools_memleak.py b/tests/python/test_tools_memleak.py
+index cae7e35d..4e921a0c 100755
+--- a/tests/python/test_tools_memleak.py
++++ b/tests/python/test_tools_memleak.py
+@@ -3,6 +3,7 @@
+ from unittest import main, skipUnless, TestCase
+ from utils import kernel_version_ge
+ import os
++import platform
+ import subprocess
+ import sys
+ import tempfile
+@@ -102,7 +103,13 @@ TOOLS_DIR = "/bcc/tools/"
+         self.assertEqual(cfg.leaking_amount, self.run_leaker("memalign"))
+ 
+     def test_pvalloc(self):
+-        self.assertEqual(cfg.leaking_amount, self.run_leaker("pvalloc"))
++        # pvalloc's implementation for power invokes mmap(), which adjusts the
++        # allocated size to meet pvalloc's constraints. Actual leaked memory
++        # could be more than requested, hence assertLessEqual.
++        if platform.machine() == 'ppc64le':
++            self.assertLessEqual(cfg.leaking_amount, self.run_leaker("pvalloc"))
++        else:
++            self.assertEqual(cfg.leaking_amount, self.run_leaker("pvalloc"))
+ 
+     def test_aligned_alloc(self):
+         self.assertEqual(cfg.leaking_amount, self.run_leaker("aligned_alloc"))
+-- 
+2.43.0
+

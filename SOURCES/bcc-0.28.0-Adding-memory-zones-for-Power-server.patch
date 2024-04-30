@@ -1,0 +1,66 @@
+From 63808fbdcb70ce2e858db0a42e7e3eeec153d5b6 Mon Sep 17 00:00:00 2001
+From: Abhishek Dubey <adubey@linux.ibm.com>
+Date: Wed, 20 Sep 2023 10:37:38 -0400
+Subject: [PATCH 4/4] Adding memory zones for Power server
+
+config PPC_BOOK3S_64 skips setting ZONE_DMA for
+server processor. NORMAL and MOVABLE zones are
+available on Power.
+
+Signed-off-by: Abhishek Dubey <adubey@linux.ibm.com>
+---
+ tools/compactsnoop.py | 28 +++++++++++++++++++---------
+ 1 file changed, 19 insertions(+), 9 deletions(-)
+
+diff --git a/tools/compactsnoop.py b/tools/compactsnoop.py
+index 2b395dec..1a476aad 100755
+--- a/tools/compactsnoop.py
++++ b/tools/compactsnoop.py
+@@ -260,11 +260,12 @@ TRACEPOINT_PROBE(compaction, mm_compaction_end)
+ }
+ """
+ 
+-if platform.machine() != 'x86_64':
++if platform.machine() != 'x86_64' and platform.machine() != 'ppc64le':
+     print("""
+-          Currently only support x86_64 servers, if you want to use it on
+-          other platforms, please refer include/linux/mmzone.h to modify
+-          zone_idex_to_str to get the right zone type
++          Currently only support x86_64 and power servers, if you want
++          to use it on other platforms(including power embedded processors),
++          please refer include/linux/mmzone.h to modify zone_idex_to_str to
++          get the right zone type
+     """)
+     exit()
+ 
+@@ -296,13 +297,22 @@ initial_ts = 0
+     # from include/linux/mmzone.h
+     # NOTICE: consider only x86_64 servers
+     zone_type = {
+-        0: "ZONE_DMA",
+-        1: "ZONE_DMA32",
+-        2: "ZONE_NORMAL",
++            'x86_64':
++                    {
++                        0: "ZONE_DMA",
++                        1: "ZONE_DMA32",
++                        2: "ZONE_NORMAL"
++                    },
++            # Zones in Power server only
++            'ppc64le':
++                    {
++                        0: "ZONE_NORMAL",
++                        1: "ZONE_MOVABLE"
++                    }
+     }
+ 
+-    if idx in zone_type:
+-        return zone_type[idx]
++    if idx in zone_type[platform.machine()]:
++        return zone_type[platform.machine()][idx]
+     else:
+         return str(idx)
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,53 @@
+From 88274e83ca1a61699741d5b1d5499beb64cac753 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Mon, 16 Oct 2023 19:41:29 +0200
+Subject: [PATCH] tools/trace: don't raise an exception in a ctype callback
+
+To exit the tool when the maximal number of event is reached (-M
+option), the tool currently call exit(), which raise a SystemExit
+exception. The handling of exception from ctype callback doesn't seem
+straightforward and dependent on python version.
+
+This patch avoid the issue altogether by using a global variable
+instead.
+
+Closes #3049
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ tools/trace.py | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/tools/trace.py b/tools/trace.py
+index 9c7cca71..2aa096fa 100755
+--- a/tools/trace.py
++++ b/tools/trace.py
+@@ -43,6 +43,7 @@ import sys
+         build_id_enabled = False
+         aggregate = False
+         symcount = {}
++        done = False
+ 
+         @classmethod
+         def configure(cls, args):
+@@ -635,7 +636,7 @@ BPF_PERF_OUTPUT(%s);
+                     if self.aggregate:
+                         self.print_aggregate_events()
+                     sys.stdout.flush()
+-                    exit()
++                    Probe.done = True;
+ 
+         def attach(self, bpf, verbose):
+                 if len(self.library) == 0:
+@@ -895,7 +896,7 @@ trace -s /lib/x86_64-linux-gnu/libc.so.6,/bin/ping 'p:c:inet_pton' -U
+                       "-" if not all_probes_trivial else ""))
+                 sys.stdout.flush()
+ 
+-                while True:
++                while not Probe.done:
+                         self.bpf.perf_buffer_poll()
+ 
+         def run(self):
+-- 
+2.41.0
+
