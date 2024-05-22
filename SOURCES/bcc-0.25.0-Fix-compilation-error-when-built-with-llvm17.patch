@@ -1,0 +1,48 @@
+From 30e77ce4e5ae11e29b023d9dcd7f6dd70cae73fa Mon Sep 17 00:00:00 2001
+From: Yonghong Song <yhs@fb.com>
+Date: Sun, 26 Mar 2023 13:10:49 -0700
+Subject: [PATCH 3/3] Fix compilation error when built with llvm17
+
+With llvm17, building bcc hits the following compilation errors:
+  ...
+  /home/yhs/work/bcc/src/cc/bpf_module.cc:21:10: fatal error: llvm-c/Transforms/IPO.h: No such file or directory
+   21 | #include <llvm-c/Transforms/IPO.h>
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~
+  /home/yhs/work/bcc/src/cc/bpf_module.cc:48:10: fatal error: llvm/Transforms/IPO/PassManagerBuilder.h: No such file or directory
+   48 | #include <llvm/Transforms/IPO/PassManagerBuilder.h>
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The above two files are removed by https://reviews.llvm.org/D144970 and https://reviews.llvm.org/D145835
+
+Signed-off-by: Yonghong Song <yhs@fb.com>
+---
+ src/cc/bpf_module.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/cc/bpf_module.cc b/src/cc/bpf_module.cc
+index 0f4a4f58..29868134 100644
+--- a/src/cc/bpf_module.cc
++++ b/src/cc/bpf_module.cc
+@@ -17,7 +17,9 @@
+ 
+ #include <fcntl.h>
+ #include <linux/bpf.h>
++#if LLVM_MAJOR_VERSION <= 16
+ #include <llvm-c/Transforms/IPO.h>
++#endif
+ #include <llvm/ExecutionEngine/MCJIT.h>
+ #include <llvm/ExecutionEngine/SectionMemoryManager.h>
+ #if LLVM_MAJOR_VERSION >= 16
+@@ -43,7 +45,9 @@
+ #include <llvm/Object/SymbolSize.h>
+ #include <llvm/Support/TargetSelect.h>
+ #include <llvm/Transforms/IPO.h>
++#if LLVM_MAJOR_VERSION <= 16
+ #include <llvm/Transforms/IPO/PassManagerBuilder.h>
++#endif
+ #include <net/if.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+-- 
+2.41.0
+

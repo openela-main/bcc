@@ -9,7 +9,7 @@
 
 Name:           bcc
 Version:        0.25.0
-Release:        5%{?dist}
+Release:        7%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
@@ -26,6 +26,10 @@ Patch8:         %{name}-%{version}-tools-compactsnoop.py-Fix-raw_tracepoint-Inva
 Patch9:         %{name}-%{version}-Revert-tools-Fix-bindsnoop-for-kernel-v5.6.patch
 Patch10:        %{name}-%{version}-tools-nfsslower.py-Fix-uninitialized-struct-pad-erro.patch
 Patch11:        %{name}-%{version}-Fix-a-llvm-compilation-error.patch
+Patch12:        %{name}-%{version}-Fix-compilation-error-when-built-with-llvm17.patch
+Patch13:        %{name}-%{version}-tools-tcpstates-fix-context-ptr-modified-error.patch
+Patch14:        %{name}-%{version}-tools-tcpstates-fix-IPv6-journal.patch
+
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -223,6 +227,13 @@ done
 
 
 %changelog
+* Wed Nov 08 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-7
+- Fix repo URL in tests.yml
+
+* Wed Nov 01 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-6
+- Rebuild on LLVM 17 (RHEL-10689)
+- Fix IPv6 for tcpstates (RHEL-8522)
+
 * Mon Jun 12 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-5
 - Fix LLVM 16 build
 
