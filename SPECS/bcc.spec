@@ -9,7 +9,7 @@
 
 Name:           bcc
 Version:        0.25.0
-Release:        7%{?dist}
+Release:        9%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
@@ -29,7 +29,9 @@ Patch11:        %{name}-%{version}-Fix-a-llvm-compilation-error.patch
 Patch12:        %{name}-%{version}-Fix-compilation-error-when-built-with-llvm17.patch
 Patch13:        %{name}-%{version}-tools-tcpstates-fix-context-ptr-modified-error.patch
 Patch14:        %{name}-%{version}-tools-tcpstates-fix-IPv6-journal.patch
-
+Patch15:        %{name}-%{version}-clang-check-header-ownership-4928.patch
+Patch16:        %{name}-%{version}-clang-Fix-file_exists_and_ownedby-return-value-4935.patch
+Patch17:        %{name}-%{version}-clang-fail-when-the-kheaders-ownership-is-wrong-4928.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -227,6 +229,12 @@ done
 
 
 %changelog
+* Tue May 28 2024 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-9
+- Really prevent the loading of compromised headers (RHEL-28768, CVE-2024-2314)
+
+* Tue Mar 12 2024 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-8
+- Check header ownership (RHEL-28768)
+
 * Wed Nov 08 2023 Jerome Marchand <jmarchan@redhat.com> - 0.25.0-7
 - Fix repo URL in tests.yml
 
