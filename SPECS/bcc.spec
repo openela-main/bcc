@@ -24,21 +24,14 @@
 
 
 Name:           bcc
-Version:        0.28.0
-Release:        5%{?dist}
+Version:        0.30.0
+Release:        6%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
-Patch0:         %%{name}-%%{version}-tools-tcpstates-fix-context-ptr-modified-error.patch
-Patch1:         %%{name}-%%{version}-tools-tcpstates-fix-IPv6-journal.patch
-Patch2:         %%{name}-%%{version}-tools-Add-support-for-the-new-block_io_-tracepoints.patch
-Patch3:         %%{name}-%%{version}-tools-trace-don-t-raise-an-exception-in-a-ctype-call.patch
-Patch4:         %%{name}-%%{version}-libbpf-tools-add-block_io_-start-done-tracepoints-su.patch
-Patch5:         %%{name}-%%{version}-libbpf-tools-Add-s390x-support.patch
-Patch6:         %%{name}-%%{version}-Fixing-pvalloc-memleak-test.patch
-Patch7:         %%{name}-%%{version}-Skipping-USDT-tests-for-Power-processor.patch
-Patch8:         %%{name}-%%{version}-Adding-memory-zones-for-Power-server.patch
+Patch0:         %%{name}-%%{version}-clang-fail-when-the-kheaders-ownership-is-wrong-4928.patch
+
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -122,6 +115,9 @@ Summary:        Command line tools for BPF Compiler Collection (BCC)
 Requires:       bcc = %{version}-%{release}
 Requires:       python3-%{name} = %{version}-%{release}
 Requires:       python3-netaddr
+%ifnarch s390x
+Requires:       python3-pyelftools
+%endif
 
 %description tools
 Command line tools for BPF Compiler Collection (BCC)
@@ -258,10 +254,36 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 
 %if %{with libbpf_tools}
 %files -n libbpf-tools
+%ifarch s390x
+%exclude %{_sbindir}/bpf-numamove
+%endif
+# RHEL doesn't provide btrfs or f2fs
+%exclude %{_sbindir}/bpf-btrfs*
+%exclude %{_sbindir}/bpf-f2fs*
 %{_sbindir}/bpf-*
 %endif
 
 %changelog
+* Thu Jul 04 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-6
+- Rebuild with LLVM 18 (RHEL-28684)
+
+* Fri May 31 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-5
+- Drop python3-pyelftools dependency on s390x until it is available
+
+* Tue May 21 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-4
+- Exclude btrfs and f2fs libbpf tools (RHEL-36579)
+
+* Mon May 20 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-3
+- Really prevent the loading of compromised headers (RHEL-28769, CVE-2024-2314)
+- Add python3-pyelftools dependency (RHEL-36583)
+
+* Fri May 03 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-2
+- Rebuild (distrobaker didn't take last build)
+
+* Wed Apr 10 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-1
+- Rebase bcc to 0.30.0 (RHEL-29031)
+- Exclude bpf-numamove on s390x (RHEL-32327)
+
 * Wed Dec 13 2023 Jerome Marchand <jmarchan@redhat.com> - 0.28.0-5
 - Fix libbpf bio tools (RHEL-19368)
 - Add S390x support to libbpf-tools (RHEL-16325)

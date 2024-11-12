@@ -1,0 +1,76 @@
+From 5bc97bbc50b1ccf0c63f320ee73a2c0abe84b596 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Fri, 17 May 2024 15:36:07 +0200
+Subject: [PATCH] clang: fail when the kheaders ownership is wrong (#4928)
+ (#4985)
+
+file_exists_and_ownedby() returns -1 when the file exists but its
+ownership is unexpected, which is very misleading since anything non
+zero is interpreted as true and a function with such a name is
+expected to return a boolean. So currently all this does, is write a
+warning message, and continues as if nothing is wrong.
+
+Make file_exists_and_ownedby() returns false when the ownership is
+wrong and have get_proc_kheaders() fails when this happen. Also have
+all the *exists* functions return bool to avoid such issues in the
+future.
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ src/cc/frontends/clang/kbuild_helper.cc | 22 +++++++++++++++++-----
+ 1 file changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/src/cc/frontends/clang/kbuild_helper.cc b/src/cc/frontends/clang/kbuild_helper.cc
+index 9409e4cc..5d3ad9c2 100644
+--- a/src/cc/frontends/clang/kbuild_helper.cc
++++ b/src/cc/frontends/clang/kbuild_helper.cc
+@@ -140,20 +140,26 @@ int KBuildHelper::get_flags(const char *uname_machine, vector<string> *cflags) {
+   return 0;
+ }
+ 
+-static inline int file_exists_and_ownedby(const char *f, uid_t uid)
++static inline bool file_exists(const char *f)
++{
++  struct stat buffer;
++  return (stat(f, &buffer) == 0);
++}
++
++static inline bool file_exists_and_ownedby(const char *f, uid_t uid)
+ {
+   struct stat buffer;
+   int ret = stat(f, &buffer) == 0;
+   if (ret) {
+     if (buffer.st_uid != uid) {
+       std::cout << "ERROR: header file ownership unexpected: " << std::string(f) << "\n";
+-      return -1;
++      return false;
+     }
+   }
+   return ret;
+ }
+ 
+-static inline int proc_kheaders_exists(void)
++static inline bool proc_kheaders_exists(void)
+ {
+   return file_exists_and_ownedby(PROC_KHEADERS_PATH, 0);
+ }
+@@ -231,8 +237,14 @@ int get_proc_kheaders(std::string &dirpath)
+            uname_data.release);
+   dirpath = std::string(dirpath_tmp);
+ 
+-  if (file_exists_and_ownedby(dirpath_tmp, 0))
+-    return 0;
++  if (file_exists(dirpath_tmp)) {
++    if (file_exists_and_ownedby(dirpath_tmp, 0))
++      return 0;
++    else
++      // The path exists, but is owned by a non-root user
++      // Something fishy is going on
++      return -EEXIST;
++  }
+ 
+   // First time so extract it
+   return extract_kheaders(dirpath, uname_data);
+-- 
+2.44.0
+
