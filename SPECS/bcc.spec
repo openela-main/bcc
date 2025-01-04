@@ -25,12 +25,13 @@
 
 Name:           bcc
 Version:        0.30.0
-Release:        6%{?dist}
+Release:        7%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Patch0:         %%{name}-%%{version}-clang-fail-when-the-kheaders-ownership-is-wrong-4928.patch
+Patch1:         %%{name}-%%{version}-RHEL-Centos-tools-fix-alignment-in-tp_args-for-bio-t.patch
 
 
 # Arches will be included as upstream support is added and dependencies are
@@ -264,6 +265,9 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
+* Thu Nov 07 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-7
+- Fic bio* tools (RHEL-65192)
+
 * Thu Jul 04 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-6
 - Rebuild with LLVM 18 (RHEL-28684)
 
