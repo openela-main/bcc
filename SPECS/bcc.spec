@@ -24,14 +24,13 @@
 
 
 Name:           bcc
-Version:        0.30.0
-Release:        7%{?dist}
+Version:        0.32.0
+Release:        2%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
-Patch0:         %%{name}-%%{version}-clang-fail-when-the-kheaders-ownership-is-wrong-4928.patch
-Patch1:         %%{name}-%%{version}-RHEL-Centos-tools-fix-alignment-in-tp_args-for-bio-t.patch
+Patch0:         %%{name}-%%{version}-RHEL-Centos-tools-fix-alignment-in-tp_args-for-bio-t.patch
 
 
 # Arches will be included as upstream support is added and dependencies are
@@ -150,7 +149,7 @@ Command line libbpf tools for BPF Compiler Collection (BCC)
 # take them.
 %if %{with libbpf_tools}
 pushd libbpf-tools;
-make BPFTOOL=bpftool LIBBPF_OBJ=%{_libdir}/libbpf.a CFLAGS="%{optflags}" LDFLAGS="%{build_ldflags}"
+make BPFTOOL=bpftool LIBBPF_OBJ=%{_libdir}/libbpf.a CFLAGS="%{optflags}" LDFLAGS="%{build_ldflags}" USE_BLAZESYM=0
 make DESTDIR=./tmp-install prefix= install
 (
     cd tmp-install/bin
@@ -265,8 +264,20 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
-* Thu Nov 07 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-7
-- Fic bio* tools (RHEL-65192)
+* Wed Jan 29 2025 Jerome Marchand <jmarchan@redhat.com> - 0.32.0-1
+- Rebuild with libbpf 1.5.0
+
+* Tue Jan 14 2025 Jerome Marchand <jmarchan@redhat.com> - 0.32.0-1
+- Rebase to the latest version (RHEL-63883)
+
+* Wed Nov 06 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-9
+- Fix gating tests of libbpf gating.
+
+* Tue Nov 05 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-8
+- Explicitely disable blazesym support (RHEL-49640)
+
+* Thu Oct 24 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-7
+- Fic bio* tools (RHEL-61615)
 
 * Thu Jul 04 2024 Jerome Marchand <jmarchan@redhat.com> - 0.30.0-6
 - Rebuild with LLVM 18 (RHEL-28684)
