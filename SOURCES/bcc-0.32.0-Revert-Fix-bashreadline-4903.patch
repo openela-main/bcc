@@ -1,0 +1,179 @@
+From 0e81f1ef9145b853745fdd56808388c9b295b1f9 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Fri, 4 Oct 2024 10:01:54 +0200
+Subject: [PATCH] Revert "Fix bashreadline (#4903)"
+
+This reverts commit 706ec4fe3dbbd63f6d7adda8d8d7311afe998cfa.
+---
+ docker/Dockerfile.ubuntu       |  2 +-
+ docker/build/Dockerfile.fedora |  2 +-
+ docker/build/Dockerfile.ubuntu |  2 +-
+ libbpf-tools/bashreadline.c    | 40 +++-------------------------------
+ tools/bashreadline.py          | 18 +--------------
+ 5 files changed, 7 insertions(+), 57 deletions(-)
+
+diff --git a/docker/Dockerfile.ubuntu b/docker/Dockerfile.ubuntu
+index a6afd969..cdb52871 100644
+--- a/docker/Dockerfile.ubuntu
++++ b/docker/Dockerfile.ubuntu
+@@ -24,6 +24,6 @@ COPY --from=builder /root/bcc/*.deb /root/bcc/
+ RUN \
+   apt-get update -y && \
+   DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip python-is-python3 binutils libelf1 kmod llvm-12-dev && \
+-  pip3 install dnslib cachetools pyelftools  && \
++  pip3 install dnslib cachetools  && \
+   dpkg -i /root/bcc/*.deb && \
+   apt-get clean
+diff --git a/docker/build/Dockerfile.fedora b/docker/build/Dockerfile.fedora
+index d135bcea..bf8c2b36 100644
+--- a/docker/build/Dockerfile.fedora
++++ b/docker/build/Dockerfile.fedora
+@@ -59,7 +59,7 @@ RUN dnf -y install \
+ 	iperf \
+ 	netperf
+ 
+-RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1 pyelftools==0.30
++RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1
+ 
+ RUN wget -O ruby-install-${RUBY_INSTALL_VERSION}.tar.gz \
+          https://github.com/postmodern/ruby-install/archive/v${RUBY_INSTALL_VERSION}.tar.gz && \
+diff --git a/docker/build/Dockerfile.ubuntu b/docker/build/Dockerfile.ubuntu
+index 50f4788a..7d29b66b 100644
+--- a/docker/build/Dockerfile.ubuntu
++++ b/docker/build/Dockerfile.ubuntu
+@@ -81,7 +81,7 @@ done \
+ && \
+       apt-get -y clean'
+ 
+-RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1 pyelftools==0.30
++RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1
+ 
+ # FIXME this is faster than building from source, but it seems there is a bug
+ # in probing libruby.so rather than ruby binary
+diff --git a/libbpf-tools/bashreadline.c b/libbpf-tools/bashreadline.c
+index 41b6a600..b069f048 100644
+--- a/libbpf-tools/bashreadline.c
++++ b/libbpf-tools/bashreadline.c
+@@ -90,41 +90,6 @@ static void handle_lost_events(void *ctx, int cpu, __u64 lost_cnt)
+ 	warn("lost %llu events on CPU #%d\n", lost_cnt, cpu);
+ }
+ 
+-static char *find_readline_function_name(const char *bash_path)
+-{
+-  bool found = false;
+-  int fd = -1;
+-  Elf *elf = NULL;
+-  Elf_Scn *scn = NULL;
+-  GElf_Shdr shdr;
+-
+-
+-  elf = open_elf(bash_path, &fd);
+-
+-  while ((scn = elf_nextscn(elf, scn)) != NULL && !found) {
+-    gelf_getshdr(scn, &shdr);
+-    if (shdr.sh_type == SHT_SYMTAB || shdr.sh_type == SHT_DYNSYM) {
+-      Elf_Data *data = elf_getdata(scn, NULL);
+-      if (data != NULL) {
+-        GElf_Sym *symtab = (GElf_Sym *) data->d_buf;
+-        int sym_count = shdr.sh_size / shdr.sh_entsize;
+-        for (int i = 0; i < sym_count; ++i) {
+-          if(strcmp("readline_internal_teardown", elf_strptr(elf, shdr.sh_link, symtab[i].st_name)) == 0){
+-            found = true;
+-            break;
+-          }
+-        }
+-    	}
+-    }
+-  }
+-
+-  close_elf(elf,fd);
+-  if (found)
+-    return "readline_internal_teardown";
+-  else
+-    return "readline";
+-}
+-
+ static char *find_readline_so()
+ {
+ 	const char *bash_path = "/bin/bash";
+@@ -135,7 +100,7 @@ static char *find_readline_so()
+ 	char path[128];
+ 	char *result = NULL;
+ 
+-	func_off = get_elf_func_offset(bash_path, find_readline_function_name(bash_path));
++	func_off = get_elf_func_offset(bash_path, "readline");
+ 	if (func_off >= 0)
+ 		return strdup(bash_path);
+ 
+@@ -194,6 +159,7 @@ int main(int argc, char **argv)
+ 	err = argp_parse(&argp, argc, argv, 0, NULL, NULL);
+ 	if (err)
+ 		return err;
++
+ 	if (libreadline_path) {
+ 		readline_so_path = libreadline_path;
+ 	} else if ((readline_so_path = find_readline_so()) == NULL) {
+@@ -221,7 +187,7 @@ int main(int argc, char **argv)
+ 		goto cleanup;
+ 	}
+ 
+-	func_off = get_elf_func_offset(readline_so_path, find_readline_function_name(readline_so_path));
++	func_off = get_elf_func_offset(readline_so_path, "readline");
+ 	if (func_off < 0) {
+ 		warn("cound not find readline in %s\n", readline_so_path);
+ 		goto cleanup;
+diff --git a/tools/bashreadline.py b/tools/bashreadline.py
+index 7e8324a2..cfbf2364 100755
+--- a/tools/bashreadline.py
++++ b/tools/bashreadline.py
+@@ -17,7 +17,6 @@
+ # 12-Feb-2016    Allan McAleavy migrated to BPF_PERF_OUTPUT
+ 
+ from __future__ import print_function
+-from elftools.elf.elffile import ELFFile
+ from bcc import BPF
+ from time import strftime
+ import argparse
+@@ -33,19 +32,6 @@ args = parser.parse_args()
+ 
+ name = args.shared if args.shared else "/bin/bash"
+ 
+-
+-def get_sym(filename):
+-    with open(filename, 'rb') as f:
+-        elf = ELFFile(f)
+-        symbol_table = elf.get_section_by_name(".dynsym")
+-        for symbol in symbol_table.iter_symbols():
+-            if symbol.name == "readline_internal_teardown":
+-                return "readline_internal_teardown"
+-    return "readline"
+-
+-
+-sym = get_sym(name)
+-
+ # load BPF program
+ bpf_text = """
+ #include <uapi/linux/ptrace.h>
+@@ -77,18 +63,16 @@ int printret(struct pt_regs *ctx) {
+ """
+ 
+ b = BPF(text=bpf_text)
+-b.attach_uretprobe(name=name, sym=sym, fn_name="printret")
++b.attach_uretprobe(name=name, sym="readline", fn_name="printret")
+ 
+ # header
+ print("%-9s %-7s %s" % ("TIME", "PID", "COMMAND"))
+ 
+-
+ def print_event(cpu, data, size):
+     event = b["events"].event(data)
+     print("%-9s %-7d %s" % (strftime("%H:%M:%S"), event.pid,
+                             event.str.decode('utf-8', 'replace')))
+ 
+-
+ b["events"].open_perf_buffer(print_event)
+ while 1:
+     try:
+-- 
+2.46.0
+

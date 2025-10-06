@@ -1,0 +1,61 @@
+From 8a9da1d866dfb69ad1ca59bdc50a799ba2da3a0c Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Thu, 24 Oct 2024 16:56:14 +0200
+Subject: [PATCH] RHEL/Centos: tools: fix alignment in tp_args for bio tools
+
+The padding in tp_args is wrong on RHEL 9 / c9s kernel because of the
+kernel commit 6bc27040eb90 ("sched: Add support for lazy preemption")
+which added a common field to tracepoints.
+
+Now the dev field is at an offset of 12 bytes as shown by
+block_io_start/done format file.
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ tools/biolatency.py | 2 +-
+ tools/biosnoop.py   | 2 +-
+ tools/biotop.py     | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/tools/biolatency.py b/tools/biolatency.py
+index 03b48a4c..ac150ea2 100755
+--- a/tools/biolatency.py
++++ b/tools/biolatency.py
+@@ -88,7 +88,7 @@ typedef struct ext_val {
+ } ext_val_t;
+ 
+ struct tp_args {
+-    u64 __unused__;
++    u32 __unused__[3];
+     dev_t dev;
+     sector_t sector;
+     unsigned int nr_sector;
+diff --git a/tools/biosnoop.py b/tools/biosnoop.py
+index f0fef98b..819e953f 100755
+--- a/tools/biosnoop.py
++++ b/tools/biosnoop.py
+@@ -66,7 +66,7 @@ struct val_t {
+ };
+ 
+ struct tp_args {
+-    u64 __unused__;
++    u32 __unused__[3];
+     dev_t dev;
+     sector_t sector;
+     unsigned int nr_sector;
+diff --git a/tools/biotop.py b/tools/biotop.py
+index 879c6b8f..4c3a1c9a 100755
+--- a/tools/biotop.py
++++ b/tools/biotop.py
+@@ -91,7 +91,7 @@ struct val_t {
+ };
+ 
+ struct tp_args {
+-    u64 __unused__;
++    u32 __unused__[3];
+     dev_t dev;
+     sector_t sector;
+     unsigned int nr_sector;
+-- 
+2.47.0
+
