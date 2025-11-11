@@ -1,0 +1,43 @@
+From 1e2fc8bc2edc48354123633343afd1737b2325df Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Sun, 18 May 2025 04:17:34 +0200
+Subject: [PATCH 2/2] clang: Define DCONFIG_CC_IS_CLANG in
+ KBuildHelper::get_flags() (#5172) (#5293)
+
+On powerpc, many tools fail with an "invalid output constraint '=YZ<>'
+in asm" error. This come from the following code in
+arch/powerpc/include/asm/asm-compat.h:
+
+Because CONFIG_CC_IS_CLANG is not defined in the headers, we end up
+using a constraint that is not understoog by clang.
+
+Defining CONFIG_CC_IS_CLANG in KBuildHelper::get_flags() fixes this
+error and possibly other similar error.
+
+Suggested-by: Shung-Hsi Yu <shung-hsi.yu@suse.com>
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ src/cc/frontends/clang/kbuild_helper.cc | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/cc/frontends/clang/kbuild_helper.cc b/src/cc/frontends/clang/kbuild_helper.cc
+index 5d3ad9c2..4f09a398 100644
+--- a/src/cc/frontends/clang/kbuild_helper.cc
++++ b/src/cc/frontends/clang/kbuild_helper.cc
+@@ -137,6 +137,13 @@ int KBuildHelper::get_flags(const char *uname_machine, vector<string> *cflags) {
+   cflags->push_back("-Wno-pointer-sign");
+   cflags->push_back("-fno-stack-protector");
+ 
++  /*
++   * kernel is usually build with gcc and the kernel devel header
++   * reflects that fact. However we build with clang and this must be
++   * set to avoid some compilation errors
++   */
++  cflags->push_back("-DCONFIG_CC_IS_CLANG");
++
+   return 0;
+ }
+ 
+-- 
+2.49.0
+

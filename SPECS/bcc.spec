@@ -24,14 +24,16 @@
 
 
 Name:           bcc
-Version:        0.32.0
-Release:        1%{?dist}
+Version:        0.34.0
+Release:        2%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        Apache-2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Patch0:         %%{name}-%%{version}-Revert-Fix-bashreadline-4903.patch
-Patch1:         %%{name}-%%{version}-RHEL-Centos-tools-fix-alignment-in-tp_args-for-bio-t.patch
+Patch1:         %%{name}-%%{version}-tools-biosnoop-Fix-biosnoop-pattern-option-5304.patch
+Patch2:         %%{name}-%%{version}-clang-Define-DCONFIG_CC_IS_CLANG-in-KBuildHelper-get.patch
+Patch3:         %%{name}-%%{version}-tools-biolatency-biosnoop-biotop-use-TRACEPOINT_PROB.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -255,13 +257,30 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %ifarch s390x
 %exclude %{_sbindir}/bpf-numamove
 %endif
-# RHEL doesn't provide btrfs or f2fs
+# RHEL doesn't provide btrfs, f2fs, bcachefs or zfs
 %exclude %{_sbindir}/bpf-btrfs*
 %exclude %{_sbindir}/bpf-f2fs*
+%exclude %{_sbindir}/bpf-bcachefs*
+%exclude %{_sbindir}/bpf-zfs*
 %{_sbindir}/bpf-*
 %endif
 
 %changelog
+* Mon Jul 28 2025 Jerome Marchand <jmarchan@redhat.com> - 0.34.0-2
+- Fix bio* tools tracepoints (RHEL-99677)
+
+* Mon May 19 2025 Jerome Marchand <jmarchan@redhat.com> - 0.34.0-1
+- Rebase to the latest version (RHEL-78921)
+- Rebuild with LLVM 20 (RHEL-81772)
+- Silence warning of trace tools (RHEL-68952)
+- Fix bpf-runqlen (RHEL-91190)
+- Fix sslsniff and sofdsnoop (RHEL-58348)
+- Fix slabratetop (RHEL-58810)
+- Fix funclatency funcslower and gethostlatency on s390x (RHEL-68947)
+- Fix bpf-klockstat on aarch64 and ppc64 (RHEL-83001)
+- Remove unsupported bpf-bcachefs* and bpf-zfs* tools (RHEL-75529)
+- Fix multiples ppc64 tools (RHEL-58147)
+
 * Tue Jan 14 2025 Jerome Marchand <jmarchan@redhat.com> - 0.32.0-1
 - Rebase to the latest version (RHEL-63886)
 
