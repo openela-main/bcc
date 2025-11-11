@@ -1,0 +1,49 @@
+From f372342fd4c1cd0c121500301833177fd6fb45ac Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Fri, 18 Jul 2025 14:15:46 +0200
+Subject: [PATCH] libbpf-tools/klockstat: Disable *_nested kprobes in the
+ fentry code
+
+Commit 789e923f ("libbpf-tools/klockstat: Allows kprobe fallback to
+work with lock debugging (#5359)") add new kprobes to be enabled on
+debug kernel and disabled on normal kernel. But it forgot to disable
+them in the fentry code, along with other kprobes.
+
+Disable *_nested kprobes in the fentry code.
+
+Fixes: 789e923f ("libbpf-tools/klockstat: Allows kprobe fallback to work with lock debugging (#5359)")
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ libbpf-tools/klockstat.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/libbpf-tools/klockstat.c b/libbpf-tools/klockstat.c
+index c3c9be89..59be05ac 100644
+--- a/libbpf-tools/klockstat.c
++++ b/libbpf-tools/klockstat.c
+@@ -804,6 +804,22 @@ static void enable_fentry(struct klockstat_bpf *obj)
+ 	bpf_program__set_autoload(obj->progs.kprobe_down_write_killable_exit, false);
+ 	bpf_program__set_autoload(obj->progs.kprobe_up_write, false);
+ 
++	bpf_program__set_autoload(obj->progs.kprobe_mutex_lock_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_mutex_lock_exit_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_mutex_lock_interruptible_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_mutex_lock_interruptible_exit_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_mutex_lock_killable_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_mutex_lock_killable_exit_nested, false);
++
++	bpf_program__set_autoload(obj->progs.kprobe_down_read_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_down_read_exit_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_down_read_killable_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_down_read_killable_exit_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_down_write_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_down_write_exit_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_down_write_killable_nested, false);
++	bpf_program__set_autoload(obj->progs.kprobe_down_write_killable_exit_nested, false);
++
+ 	bpf_program__set_autoload(obj->progs.kprobe_rtnetlink_rcv_msg, false);
+ 	bpf_program__set_autoload(obj->progs.kprobe_rtnetlink_rcv_msg_exit, false);
+ 	bpf_program__set_autoload(obj->progs.kprobe_netlink_dump, false);
+-- 
+2.50.1
+

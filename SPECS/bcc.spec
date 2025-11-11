@@ -24,14 +24,16 @@
 
 
 Name:           bcc
-Version:        0.32.0
+Version:        0.34.0
 Release:        2%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Patch0:         %%{name}-%%{version}-RHEL-Centos-tools-fix-alignment-in-tp_args-for-bio-t.patch
-
+Patch1:         %%{name}-%%{version}-tools-biosnoop-Fix-biosnoop-pattern-option-5304.patch
+Patch2:         %%{name}-%%{version}-libbpf-tools-klockstat-Allows-kprobe-fallback-to-wor.patch
+Patch3:         %%{name}-%%{version}-libbpf-tools-klockstat-Disable-_nested-kprobes-in-th.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -191,7 +193,7 @@ rm -rf %{buildroot}%{_datadir}/%{name}/tools/old/
 
 # We cannot run the test suit since it requires root and it makes changes to
 # the machine (e.g, IP address)
-#%check
+# %%check
 
 %if %{with libbpf_tools}
 mkdir -p %{buildroot}/%{_sbindir}
@@ -244,6 +246,10 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %exclude %{_datadir}/%{name}/tools/criticalstat
 %exclude %{_datadir}/%{name}/tools/doc/criticalstat_example.txt
 %exclude %{_mandir}/man8/bcc-criticalstat.8.gz
+# slabratetop isn't supported on RHEL 9 kernel anymore
+%exclude %{_datadir}/%{name}/tools/slabratetop
+%exclude %{_datadir}/%{name}/tools/doc/slabratetop_example.txt
+%exclude %{_mandir}/man8/bcc-slabratetop.8.gz
 %endif
 %{_mandir}/man8/*
 
@@ -257,13 +263,27 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %ifarch s390x
 %exclude %{_sbindir}/bpf-numamove
 %endif
-# RHEL doesn't provide btrfs or f2fs
+# RHEL doesn't provide btrfs, f2fs bcachefs or zfs
 %exclude %{_sbindir}/bpf-btrfs*
 %exclude %{_sbindir}/bpf-f2fs*
+%exclude %{_sbindir}/bpf-bcachefs*
+%exclude %{_sbindir}/bpf-zfs*
 %{_sbindir}/bpf-*
 %endif
 
 %changelog
+* Mon Jul 21 2025 Jerome Marchand <jmarchan@redhat.com> - 0.34.0-2
+- Fix bpf-klockstat on aarch64 and ppc64le debug (RHEL-78619)
+- Remove macro in comment.
+
+* Wed Jun 04 2025 Jerome Marchand <jmarchan@redhat.com> - 0.34.0-1
+- Rebase to version 0.34.0 (RHEL-78920)
+- Rebuild with LLVM 20 (RHEL-81773)
+- Fix biosnoop pattern option (RHEL-90848)
+- Fix bpf-klockstat on aarch64 and ppc64le (RHEL-78619)
+- Remove unsupported bpf-bcachefs* and bpf-zfs* tools (RHEL-78166)
+- Remove unsupported slaratetop tool (RHEL-78162)
+
 * Wed Jan 29 2025 Jerome Marchand <jmarchan@redhat.com> - 0.32.0-1
 - Rebuild with libbpf 1.5.0
 
