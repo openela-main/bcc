@@ -24,16 +24,18 @@
 
 
 Name:           bcc
-Version:        0.34.0
-Release:        2%{?dist}
+Version:        0.35.0
+Release:        3%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        Apache-2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Patch0:         %%{name}-%%{version}-Revert-Fix-bashreadline-4903.patch
-Patch1:         %%{name}-%%{version}-tools-biosnoop-Fix-biosnoop-pattern-option-5304.patch
-Patch2:         %%{name}-%%{version}-clang-Define-DCONFIG_CC_IS_CLANG-in-KBuildHelper-get.patch
-Patch3:         %%{name}-%%{version}-tools-biolatency-biosnoop-biotop-use-TRACEPOINT_PROB.patch
+Patch1:         %%{name}-%%{version}-tools-biolatency-biosnoop-biotop-use-TRACEPOINT_PROB.patch
+Patch2:         %%{name}-%%{version}-Fix-a-build-failure-with-clang21-5369.patch
+Patch3:         %%{name}-%%{version}-libbpf-tools-ksnoop-Fix-two-invalid-access-to-map-va.patch
+Patch4:         %%{name}-%%{version}-libbpf-tools-javagc-Include-usdt.bpf.h-header.patch
+Patch5:         %%{name}-%%{version}-tools-tcpconnect-fix-iov-field-for-DNS-with-Linux-6..patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -266,6 +268,17 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
+* Wed Jan 07 2026 Jerome Marchand <jmarchan@redhat.com> - 0.35.0-3
+- Rebuild with LLVM 21 (RHEL-108333)
+
+* Wed Oct 29 2025 Jerome Marchand <jmarchan@redhat.com> - 0.35.0-2
+- Rebuild in a side-tag
+
+* Mon Oct 27 2025 Jerome Marchand <jmarchan@redhat.com> - 0.35.0-1
+- Rebase to version 0.35.0 (RHEL-79002)
+- Fix bpf-ksnoop (RHEL-93852)
+- Fix bpf-javagc (RHEL-75531)
+
 * Mon Jul 28 2025 Jerome Marchand <jmarchan@redhat.com> - 0.34.0-2
 - Fix bio* tools tracepoints (RHEL-99677)
 

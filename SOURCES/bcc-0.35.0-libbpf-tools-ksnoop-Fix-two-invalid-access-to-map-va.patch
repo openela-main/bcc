@@ -1,0 +1,79 @@
+From 7804b1238f6cb1a874a2c4a06caeac928412d0f5 Mon Sep 17 00:00:00 2001
+From: Rong Tao <rongtao@cestc.cn>
+Date: Sun, 13 Jul 2025 12:26:14 +0800
+Subject: [PATCH 4/6] libbpf-tools: ksnoop: Fix two invalid access to map value
+ (#5361)
+
+On fedora42, llvm 20.1.7, kernel 6.15.4-200.fc42.x86_64 has two verifier
+errors. Test with command:
+
+    $ sudo ./ksnoop trace do_sys_openat2
+
+1st:
+    ; last_stack_depth = stack_depth - 1; @ ksnoop.bpf.c:102
+    108: (bc) w3 = w6                     ; frame1: R3_w=scalar(id=5,smin=smin32=0,smax=umax=smax32=umax32=14,var_off=(0x0; 0xf)) R6=scalar(id=5,smin=smin32=0,smax=umax=smax32=umax32=14,var_off=(0x0; 0xf))
+    109: (04) w3 += -1                    ; frame1: R3_w=scalar(smin=0,smax=umax=0xffffffff,smin32=-1,smax32=13,var_off=(0x0; 0xffffffff))
+    110: (bc) w4 = w3                     ; frame1: R3_w=scalar(id=6,smin=0,smax=umax=0xffffffff,smin32=-1,smax32=13,var_off=(0x0; 0xffffffff)) R4_w=scalar(id=6,smin=0,smax=umax=0xffffffff,smin32=-1,smax32=13,var_off=(0x0; 0xffffffff))
+    111: (54) w4 &= 255                   ; frame1: R4_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+    112: (b7) r7 = 0                      ; frame1: R7=0
+    ; if (last_stack_depth >= 0 && @ ksnoop.bpf.c:104
+    113: (26) if w4 > 0xf goto pc+5       ; frame1: R4=scalar(smin=smin32=0,smax=umax=smax32=umax32=15,var_off=(0x0; 0xf))
+    ; last_ip = func_stack->ips[last_stack_depth]; @ ksnoop.bpf.c:106
+    114: (57) r3 &= 255                   ; frame1: R3_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=255,var_off=(0x0; 0xff))
+    115: (67) r3 <<= 3                    ; frame1: R3_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=2040,var_off=(0x0; 0x7f8))
+    116: (bf) r4 = r2                     ; frame1: R2=map_value(map=ksnoop_func_sta,ks=8,vs=144) R4_w=map_value(map=ksnoop_func_sta,ks=8,vs=144)
+    117: (0f) r4 += r3                    ; frame1: R3_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=2040,var_off=(0x0; 0x7f8)) R4_w=map_value(map=ksnoop_func_sta,ks=8,vs=144,smin=smin32=0,smax=umax=smax32=umax32=2040,var_off=(0x0; 0x7f8))
+    118: (79) r7 = *(u64 *)(r4 +8)
+    invalid access to map value, value_size=144 off=2048 size=8
+
+    The last_stack_depth use 'w4 > 0xf' check boundary, but 'r3 &= 255'
+    is beyond 0xf (0~15).
+
+2nd:
+    ; trace_len = sizeof(*trace) + trace->buf_len - MAX_TRACE_BUF; @ ksnoop.bpf.c:222
+    502: (04) w5 += 4008                  ; frame1: R5_w=scalar(smin=umin=smin32=umin32=4009,smax=umax=smax32=umax32=0x10fa7,var_off=(0x0; 0x1ffff))
+    503: (bc) w2 = w5                     ; frame1: R2_w=scalar(id=27,smin=umin=smin32=umin32=4009,smax=umax=smax32=umax32=0x10fa7,var_off=(0x0; 0x1ffff)) R5_w=scalar(id=27,smin=umin=smin32=umin32=4009,smax=umax=smax32=umax32=0x10fa7,var_off=(0x0; 0x1ffff))
+    504: (54) w2 &= 65535                 ; frame1: R2_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xffff,var_off=(0x0; 0xffff))
+    ; if (trace_len <= sizeof(*trace)) @ ksnoop.bpf.c:224
+    505: (26) if w2 > 0x3fa8 goto pc+7    ; frame1: R2_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=16296,var_off=(0x0; 0x3fff))
+    506: (57) r5 &= 65535                 ; frame1: R5_w=scalar(smin=smin32=0,smax=umax=smax32=umax32=0xffff,var_off=(0x0; 0xffff))
+    507: (18) r2 = 0xffff8ec554700c00     ; frame1: R2_w=map_ptr(map=ksnoop_perf_map,ks=4,vs=4)
+    509: (18) r3 = 0xffffffff             ; frame1: R3_w=0xffffffff
+    511: (bf) r4 = r9                     ; frame1: R4_w=map_value(map=ksnoop_func_map,ks=8,vs=16296) R9=map_value(map=ksnoop_func_map,ks=8,vs=16296)
+    512: (85) call bpf_perf_event_output#25
+    invalid access to map value, value_size=16296 off=0 size=65535
+
+    Just fix it with size type 'u64' instead of 'u32', see:
+    long bpf_perf_event_output(void *ctx, struct bpf_map *map, u64 flags, void *data, u64 size)
+
+Signed-off-by: Rong Tao <rongtao@cestc.cn>
+---
+ libbpf-tools/ksnoop.bpf.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/libbpf-tools/ksnoop.bpf.c b/libbpf-tools/ksnoop.bpf.c
+index f07ff561..15aa7d75 100644
+--- a/libbpf-tools/ksnoop.bpf.c
++++ b/libbpf-tools/ksnoop.bpf.c
+@@ -103,7 +103,8 @@ static struct trace *get_trace(struct pt_regs *ctx, bool entry)
+ 		/* get address of last function we called */
+ 		if (last_stack_depth >= 0 &&
+ 		    last_stack_depth < FUNC_MAX_STACK_DEPTH)
+-			last_ip = func_stack->ips[last_stack_depth];
++			bpf_probe_read_kernel(&last_ip, sizeof(last_ip),
++					      &func_stack->ips[last_stack_depth]);
+ 		/* push ip onto stack. return will pop it. */
+ 		func_stack->ips[stack_depth] = ip;
+ 		/* mask used in case bounds checks are optimized out */
+@@ -202,7 +203,7 @@ static struct trace *get_trace(struct pt_regs *ctx, bool entry)
+ 
+ static void output_trace(struct pt_regs *ctx, struct trace *trace)
+ {
+-	__u16 trace_len;
++	__u64 trace_len;
+ 
+ 	if (trace->buf_len == 0)
+ 		goto skip;
+-- 
+2.51.0
+

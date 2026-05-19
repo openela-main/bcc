@@ -1,19 +1,18 @@
-From 0e81f1ef9145b853745fdd56808388c9b295b1f9 Mon Sep 17 00:00:00 2001
+From c343c5e5419a45792db31656f0f51824e92f4703 Mon Sep 17 00:00:00 2001
 From: Jerome Marchand <jmarchan@redhat.com>
-Date: Fri, 4 Oct 2024 10:01:54 +0200
-Subject: [PATCH] Revert "Fix bashreadline (#4903)"
+Date: Mon, 27 Oct 2025 11:23:27 +0100
+Subject: [PATCH 1/6] Revert "Fix bashreadline (#4903)"
 
 This reverts commit 706ec4fe3dbbd63f6d7adda8d8d7311afe998cfa.
 ---
  docker/Dockerfile.ubuntu       |  2 +-
- docker/build/Dockerfile.fedora |  2 +-
- docker/build/Dockerfile.ubuntu |  2 +-
+ docker/build/Dockerfile.ubuntu |  1 -
  libbpf-tools/bashreadline.c    | 40 +++-------------------------------
  tools/bashreadline.py          | 18 +--------------
- 5 files changed, 7 insertions(+), 57 deletions(-)
+ 4 files changed, 5 insertions(+), 56 deletions(-)
 
 diff --git a/docker/Dockerfile.ubuntu b/docker/Dockerfile.ubuntu
-index a6afd969..cdb52871 100644
+index a6afd969..ff8d9977 100644
 --- a/docker/Dockerfile.ubuntu
 +++ b/docker/Dockerfile.ubuntu
 @@ -24,6 +24,6 @@ COPY --from=builder /root/bcc/*.deb /root/bcc/
@@ -21,37 +20,23 @@ index a6afd969..cdb52871 100644
    apt-get update -y && \
    DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip python-is-python3 binutils libelf1 kmod llvm-12-dev && \
 -  pip3 install dnslib cachetools pyelftools  && \
-+  pip3 install dnslib cachetools  && \
++  pip3 install dnslib cachetools && \
    dpkg -i /root/bcc/*.deb && \
    apt-get clean
-diff --git a/docker/build/Dockerfile.fedora b/docker/build/Dockerfile.fedora
-index d135bcea..bf8c2b36 100644
---- a/docker/build/Dockerfile.fedora
-+++ b/docker/build/Dockerfile.fedora
-@@ -59,7 +59,7 @@ RUN dnf -y install \
- 	iperf \
- 	netperf
- 
--RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1 pyelftools==0.30
-+RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1
- 
- RUN wget -O ruby-install-${RUBY_INSTALL_VERSION}.tar.gz \
-          https://github.com/postmodern/ruby-install/archive/v${RUBY_INSTALL_VERSION}.tar.gz && \
 diff --git a/docker/build/Dockerfile.ubuntu b/docker/build/Dockerfile.ubuntu
-index 50f4788a..7d29b66b 100644
+index 87b5fa6f..36c0e863 100644
 --- a/docker/build/Dockerfile.ubuntu
 +++ b/docker/build/Dockerfile.ubuntu
-@@ -81,7 +81,7 @@ done \
- && \
-       apt-get -y clean'
- 
--RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1 pyelftools==0.30
-+RUN pip3 install pyroute2==0.5.18 netaddr==0.8.0 dnslib==0.9.14 cachetools==3.1.1
+@@ -86,7 +86,6 @@ RUN apt-get install -y python3-setuptools \
+       python3-netaddr \
+       python3-dnslib \
+       python3-cachetools \
+-      python3-pyelftools
  
  # FIXME this is faster than building from source, but it seems there is a bug
  # in probing libruby.so rather than ruby binary
 diff --git a/libbpf-tools/bashreadline.c b/libbpf-tools/bashreadline.c
-index 41b6a600..b069f048 100644
+index a83141e8..b9baf808 100644
 --- a/libbpf-tools/bashreadline.c
 +++ b/libbpf-tools/bashreadline.c
 @@ -90,41 +90,6 @@ static void handle_lost_events(void *ctx, int cpu, __u64 lost_cnt)
@@ -175,5 +160,5 @@ index 7e8324a2..cfbf2364 100755
  while 1:
      try:
 -- 
-2.46.0
+2.51.0
 

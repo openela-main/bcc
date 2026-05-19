@@ -1,0 +1,64 @@
+From 4af39db87ffbc8ae8f4e868da7fa076858f0c734 Mon Sep 17 00:00:00 2001
+From: Francois Lesueur <11961066+flesueur@users.noreply.github.com>
+Date: Wed, 6 Aug 2025 06:11:02 +0200
+Subject: [PATCH 6/6] tools/tcpconnect: fix iov field for DNS with Linux>=6.4
+ (#5382)
+
+Tcpconnect with DNS (-d flag) does not work with Linux>=6.4. The kernel representation of struct iov_iter changed in 6.4.
+
+This PR adapts the iov field depending on the structure. It also removes inet_sk() which did not work on a recent kernel (6.6).
+---
+ tools/tcpconnect.py | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/tools/tcpconnect.py b/tools/tcpconnect.py
+index a38bad8d..dc35cb28 100755
+--- a/tools/tcpconnect.py
++++ b/tools/tcpconnect.py
+@@ -276,7 +276,7 @@ int trace_udp_recvmsg(struct pt_regs *ctx)
+ {
+     __u64 pid_tgid = bpf_get_current_pid_tgid();
+     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+-    struct inet_sock *is = inet_sk(sk);
++    struct inet_sock *is = (struct inet_sock *)sk;
+ 
+     // only grab port 53 packets, 13568 is ntohs(53)
+     if (is->inet_dport == 13568) {
+@@ -303,7 +303,7 @@ int trace_udp_ret_recvmsg(struct pt_regs *ctx)
+         goto delete_and_return;
+     size_t buflen = (size_t)copied;
+ 
+-    if (buflen > msghdr->msg_iter.iov->iov_len)
++    if (buflen > msghdr->msg_iter.IOV_FIELD->iov_len)
+         goto delete_and_return;
+ 
+     if (buflen > MAX_PKT)
+@@ -313,7 +313,7 @@ int trace_udp_ret_recvmsg(struct pt_regs *ctx)
+     if (!data) // this should never happen, just making the verifier happy
+         return 0;
+ 
+-    void *iovbase = msghdr->msg_iter.iov->iov_base;
++    void *iovbase = msghdr->msg_iter.IOV_FIELD->iov_base;
+     bpf_probe_read(data->pkt, buflen, iovbase);
+     dns_events.perf_submit(ctx, data, buflen);
+ 
+@@ -386,10 +386,14 @@ bpf_text = bpf_text.replace('FILTER_FAMILY', '')
+ bpf_text = bpf_text.replace('FILTER_UID', '')
+ 
+ if args.dns:
+-    if BPF.kernel_struct_has_field(b'iov_iter', b'iter_type') == 1:
++    if BPF.kernel_struct_has_field(b'iov_iter', b'type') == 1:
++        dns_bpf_text = dns_bpf_text.replace('TYPE_FIELD', 'type')
++    else:
+         dns_bpf_text = dns_bpf_text.replace('TYPE_FIELD', 'iter_type')
++    if BPF.kernel_struct_has_field(b'iov_iter', b'iov') == 1:
++        dns_bpf_text = dns_bpf_text.replace('IOV_FIELD', 'iov')
+     else:
+-        dns_bpf_text = dns_bpf_text.replace('TYPE_FIELD', 'type')
++        dns_bpf_text = dns_bpf_text.replace('IOV_FIELD', '__iov')
+     bpf_text += dns_bpf_text
+ 
+ if debug or args.ebpf:
+-- 
+2.51.0
+
