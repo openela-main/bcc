@@ -1,0 +1,31 @@
+From efaf25163a59627776e7334b99f78b74c8979fef Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Tue, 7 Oct 2025 15:32:36 +0200
+Subject: [PATCH] libbpf-tools/javagc: Include usdt.bpf.h header
+
+Include usdt.bpf.h header to javagc.bpf.c.
+
+Fixes the following error:
+libbpf: usdt: failed to find USDT support BPF maps, did you forget to include bpf/usdt.bpf.h?
+attach usdt mem__pool__gc__begin failed: No such process
+
+Signed-off-by: Jerome Marchand <jmarchan@redhat.com>
+---
+ libbpf-tools/javagc.bpf.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/libbpf-tools/javagc.bpf.c b/libbpf-tools/javagc.bpf.c
+index 5bfe635c..35535d92 100644
+--- a/libbpf-tools/javagc.bpf.c
++++ b/libbpf-tools/javagc.bpf.c
+@@ -3,6 +3,7 @@
+ #include <vmlinux.h>
+ #include <bpf/bpf_helpers.h>
+ #include <bpf/bpf_core_read.h>
++#include <bpf/usdt.bpf.h>
+ #include "javagc.h"
+ 
+ struct {
+-- 
+2.51.0
+

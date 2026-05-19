@@ -24,16 +24,19 @@
 
 
 Name:           bcc
-Version:        0.34.0
+Version:        0.35.0
 Release:        2%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Patch0:         %%{name}-%%{version}-RHEL-Centos-tools-fix-alignment-in-tp_args-for-bio-t.patch
-Patch1:         %%{name}-%%{version}-tools-biosnoop-Fix-biosnoop-pattern-option-5304.patch
-Patch2:         %%{name}-%%{version}-libbpf-tools-klockstat-Allows-kprobe-fallback-to-wor.patch
-Patch3:         %%{name}-%%{version}-libbpf-tools-klockstat-Disable-_nested-kprobes-in-th.patch
+Patch1:         %%{name}-%%{version}-libbpf-tools-klockstat-Allows-kprobe-fallback-to-wor.patch
+Patch2:         %%{name}-%%{version}-libbpf-tools-klockstat-Disable-_nested-kprobes-in-th.patch
+Patch3:         %%{name}-%%{version}-Fix-a-build-failure-with-clang21-5369.patch
+Patch4:         %%{name}-%%{version}-libbpf-tools-ksnoop-Fix-two-invalid-access-to-map-va.patch
+Patch5:         %%{name}-%%{version}-libbpf-tools-javagc-Include-usdt.bpf.h-header.patch
+Patch6:         %%{name}-%%{version}-tools-tcpconnect-fix-iov-field-for-DNS-with-Linux-6..patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -272,6 +275,14 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
+* Mon Dec 01 2025 Jerome Marchand <jmarchan@redhat.com> - 0.35.0-2
+- Rebuild with LLVM 21 (RHEL-108343)
+
+* Thu Oct 16 2025 Jerome Marchand <jmarchan@redhat.com> - 0.35.0-1
+- Rebase to version 0.35.0 (RHEL-79001)
+- Fix bpf-ksnoop (RHEL-96166)
+- Fix bpf-javagc (RHEL-78173)
+
 * Mon Jul 21 2025 Jerome Marchand <jmarchan@redhat.com> - 0.34.0-2
 - Fix bpf-klockstat on aarch64 and ppc64le debug (RHEL-78619)
 - Remove macro in comment.
