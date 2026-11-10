@@ -24,18 +24,15 @@
 
 
 Name:           bcc
-Version:        0.35.0
-Release:        3%{?dist}
+Version:        0.36.1
+Release:        1%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        Apache-2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Patch0:         %%{name}-%%{version}-Revert-Fix-bashreadline-4903.patch
-Patch1:         %%{name}-%%{version}-tools-biolatency-biosnoop-biotop-use-TRACEPOINT_PROB.patch
-Patch2:         %%{name}-%%{version}-Fix-a-build-failure-with-clang21-5369.patch
-Patch3:         %%{name}-%%{version}-libbpf-tools-ksnoop-Fix-two-invalid-access-to-map-va.patch
-Patch4:         %%{name}-%%{version}-libbpf-tools-javagc-Include-usdt.bpf.h-header.patch
-Patch5:         %%{name}-%%{version}-tools-tcpconnect-fix-iov-field-for-DNS-with-Linux-6..patch
+Patch1:         %%{name}-%%{version}-Fix-build-with-LLVM-22.patch
+Patch2:         %%{name}-%%{version}-clang-Add-microsoft-extensions-build-flags.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -135,6 +132,7 @@ Command line libbpf tools for BPF Compiler Collection (BCC)
 %endif
 
 %prep
+# mv bcc-0.36.0/ bcc-0.36.1/
 %autosetup -p1
 
 
@@ -268,6 +266,17 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
+* Mon May 18 2026 Jerome Marchand <jmarchan@redhat.com> - 0.36.1-1
+- Rebase to version 0.36.1 (RHEL-162980)
+- Rebuild with LLVM 22 (RHEL-140402)
+- Fix multiple failure introduced by BPF 6.19 update (RHEL-174797)
+- Fix klockstat (RHEL-174798)
+- Fix bpf-cpufreq (RHEL-93855)      
+- Fix bpf-syncsnoop (RHEL-93854)
+- Fix tcpaccept (RHEL-93424)
+- Fix filegone, kvmexit, netqtop and tcpconnect on s390x (RHEL-75515)
+- Fix profile on s390x (RHEL-68950)
+
 * Wed Jan 07 2026 Jerome Marchand <jmarchan@redhat.com> - 0.35.0-3
 - Rebuild with LLVM 21 (RHEL-108333)
 
