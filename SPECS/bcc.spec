@@ -24,19 +24,14 @@
 
 
 Name:           bcc
-Version:        0.35.0
-Release:        2%{?dist}
+Version:        0.36.1
+Release:        1%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
-Patch0:         %%{name}-%%{version}-RHEL-Centos-tools-fix-alignment-in-tp_args-for-bio-t.patch
-Patch1:         %%{name}-%%{version}-libbpf-tools-klockstat-Allows-kprobe-fallback-to-wor.patch
-Patch2:         %%{name}-%%{version}-libbpf-tools-klockstat-Disable-_nested-kprobes-in-th.patch
-Patch3:         %%{name}-%%{version}-Fix-a-build-failure-with-clang21-5369.patch
-Patch4:         %%{name}-%%{version}-libbpf-tools-ksnoop-Fix-two-invalid-access-to-map-va.patch
-Patch5:         %%{name}-%%{version}-libbpf-tools-javagc-Include-usdt.bpf.h-header.patch
-Patch6:         %%{name}-%%{version}-tools-tcpconnect-fix-iov-field-for-DNS-with-Linux-6..patch
+Patch0:         %%{name}-%%{version}-Fix-build-with-LLVM-22.patch
+Patch1:         %%{name}-%%{version}-clang-Add-microsoft-extensions-build-flags.patch
 
 # Arches will be included as upstream support is added and dependencies are
 # satisfied in the respective arches
@@ -275,6 +270,15 @@ cp -a libbpf-tools/tmp-install/bin/* %{buildroot}/%{_sbindir}/
 %endif
 
 %changelog
+* Wed May 20 2026 Jerome Marchand <jmarchan@redhat.com> - 0.36.1-1
+- Rebase to version 0.36.1 (RHEL-162981)
+- Rebuild with LLVM 22 (RHEL-170955)
+- Got rid of the RHEL only bio tool fix thanks to comnmit 36305815
+- Fix filegone, kvmexit, netqtop and tcpconnect on s390x (RHEL-118750)
+- Fix profile on s390x (RHEL-112865)
+- Fix bpf-cpufreq (RHEL-78168)
+- Fix bpf-syncsnoop (RHEL-78171)
+
 * Mon Dec 01 2025 Jerome Marchand <jmarchan@redhat.com> - 0.35.0-2
 - Rebuild with LLVM 21 (RHEL-108343)
 
